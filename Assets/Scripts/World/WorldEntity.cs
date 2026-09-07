@@ -1,10 +1,10 @@
 using UnityEngine;
 
-public class LevelEntity {
+public class WorldEntity {
     public ElementKind Kind { get; }
     public Vector2Int Position { get; set; }
 
-    public LevelEntity(ElementKind kind, Vector2Int position) {
+    public WorldEntity(ElementKind kind, Vector2Int position) {
         Kind = kind;
         Position = position;
     }

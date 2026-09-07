@@ -1,9 +1,10 @@
 public static class ElementRules {
     public const int WobbleFrames = 3;
 
-    // Пол: по нему ходят, его не толкают.
+    // Пол: по нему ходят, его не толкают и в ряды он не собирается. Трон — декоративная клетка пола.
     public static bool IsFloor(ElementKind kind) {
-        return kind is ElementKind.Grass or ElementKind.Water or ElementKind.Lava or ElementKind.Ice or ElementKind.Sand;
+        return kind is ElementKind.Grass or ElementKind.Water or ElementKind.Lava or ElementKind.Ice or ElementKind.Sand
+            or ElementKind.Throne;
     }
 
     // Непроходимое и неподвижное.
@@ -11,7 +12,7 @@ public static class ElementRules {
         return kind == ElementKind.Wall;
     }
 
-    // Всё остальное герой толкает перед собой.
+    // Всё остальное — элементы три-в-ряд: герой их толкает, с трона меняет местами, три подряд исчезают.
     public static bool IsPushable(ElementKind kind) {
         return kind != ElementKind.None && kind != ElementKind.Hero && !IsFloor(kind) && !IsSolid(kind);
     }
@@ -22,6 +23,10 @@ public static class ElementRules {
     }
 
     public static string SpriteName(ElementKind kind, int frame) {
-        return $"{kind.ToString().ToLowerInvariant()}_{frame}";
+        return SpriteName(kind.ToString().ToLowerInvariant(), frame);
+    }
+
+    public static string SpriteName(string name, int frame) {
+        return $"{name}_{frame}";
     }
 }

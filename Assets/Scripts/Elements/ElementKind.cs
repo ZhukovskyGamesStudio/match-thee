@@ -58,4 +58,7 @@ public enum ElementKind {
     Moon,
     Lightning,
     Fire,
+
+    // Новые виды добавляем только в конец: номера сериализованы в легенде карты.
+    Throne,
 }
