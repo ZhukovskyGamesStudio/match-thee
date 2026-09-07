@@ -32,7 +32,8 @@ public class HudView : MonoBehaviour {
     private static readonly Color FormTextColor = new Color32(237, 226, 133, 255); // цвет короны: текущая форма героя
     private static readonly Color RowHoverColor = new Color(1f, 1f, 1f, 0.12f);
     private static readonly Color RowPressedColor = new Color(1f, 1f, 1f, 0.25f);
-    private const string UnlockedLabel = "∞";
+    private static readonly Color GlobalPopupColor = new Color32(255, 208, 64, 255); // ресурс на все экраны — золотом
+    private const string LocalColorTag = "<color=#8c8c96>";                             // местная часть счёта — тусклее
     private const float WobbleFps = 5f;
     private const float SpritePixels = 24f; // пикселей спрайта на клетку
     private const float WinBackdropAlpha = 0.72f;
@@ -149,8 +150,8 @@ public class HudView : MonoBehaviour {
         Layout();
 
         _inventory.Added += OnResourceAdded;
-        _inventory.Unlocked += OnKindUnlocked;
         _inventory.Changed += OnResourceChanged;
+        _inventory.ScreenChanged += RebuildPanel;
         _model.HeroFormChanged += OnHeroFormChanged;
         _model.Restored += OnRestored;
     }
@@ -158,8 +159,8 @@ public class HudView : MonoBehaviour {
     private void OnDestroy() {
         if (_inventory != null) {
             _inventory.Added -= OnResourceAdded;
-            _inventory.Unlocked -= OnKindUnlocked;
             _inventory.Changed -= OnResourceChanged;
+            _inventory.ScreenChanged -= RebuildPanel;
         }
 
         if (_model != null) {
@@ -336,18 +337,11 @@ public class HudView : MonoBehaviour {
         _replayShown = false;
     }
 
-    private void OnResourceAdded(ElementKind kind, int amount) {
+    // Всплывашка «+N»: за ряд из пяти (на все экраны) — золотом, за ряд из четырёх (только здесь) — белым.
+    private void OnResourceAdded(ElementKind kind, int amount, bool everywhere) {
         RevealBackpack();
-        ShowPopup(kind, $"+{amount}");
+        ShowPopup(kind, $"+{amount}", everywhere ? GlobalPopupColor : TextColor);
         _punchProgress = 0f;
-    }
-
-    // Вид открыт навсегда (ряд из пяти): всплывашка со знаком бесконечности.
-    private void OnKindUnlocked(ElementKind kind) {
-        RevealBackpack();
-        ShowPopup(kind, UnlockedLabel);
-        _punchProgress = 0f;
-        RebuildPanel();
     }
 
     // Рюкзак виден с первого собранного предмета и дальше уже не прячется.
@@ -372,7 +366,7 @@ public class HudView : MonoBehaviour {
         _restart.gameObject.SetActive(true);
     }
 
-    private bool IsInventoryEmpty => _inventory.UnlockedKinds.Count == 0 && _inventory.Counts.All(pair => pair.Value <= 0);
+    private bool IsInventoryEmpty => _inventory.IsEmpty;
 
     // Q или клик: пустой рюкзак трясётся и краснеет, иначе герой превращается в следующий предмет по кругу.
     private void OnBackpackPressed() {
@@ -440,7 +434,7 @@ public class HudView : MonoBehaviour {
     }
 
     // Всплывашка: иконка ресурса и подпись («+1» или «∞») справа от рюкзака; появляется, плывёт вверх и тает.
-    private void ShowPopup(ElementKind kind, string label) {
+    private void ShowPopup(ElementKind kind, string label, Color color) {
         float size = _backpackSize * 0.6f;
         float width = size * 2.3f;
 
@@ -453,6 +447,7 @@ public class HudView : MonoBehaviour {
 
         PlaceTopLeft(CreateImage(root.transform, "Icon", _elements.GetFrame(kind, 0)), Vector2.zero, new Vector2(size, size));
         Text text = CreateText(root.transform, label, size * 0.75f, TextAnchor.MiddleLeft);
+        text.color = color;
         PlaceTopLeft(text.rectTransform, new Vector2(size + size * 0.15f, 0f), new Vector2(width - size, size));
 
         _popups.Add(new Popup { Rect = rect, Group = root.GetComponent<CanvasGroup>(), Start = start });
@@ -486,8 +481,9 @@ public class HudView : MonoBehaviour {
         _backpack.localScale = Vector3.one * (1f + (PunchScale - 1f) * Mathf.Sin(_punchProgress * Mathf.PI));
     }
 
-    // Панель под рюкзаком, видна всегда, пока в рюкзаке что-то есть: по строке на предмет — иконка и «∞»
-    // или число. Пока герой превращён, первой строкой он сам. Текущая форма подсвечена цветом короны.
+    // Панель под рюкзаком, видна всегда, пока в рюкзаке что-то есть: по строке на предмет — иконка и счёт:
+    // общие «×N» и тусклее местные «+M» этого экрана. Пока герой превращён, первой строкой он сам.
+    // Текущая форма подсвечена цветом короны.
     private void RebuildPanel() {
         if (_panelInner == null) {
             return;
@@ -503,7 +499,14 @@ public class HudView : MonoBehaviour {
         }
 
         foreach (ElementKind kind in _inventory.Kinds) {
-            items.Add((kind, _inventory.IsUnlocked(kind) ? UnlockedLabel : $"×{_inventory.Count(kind)}"));
+            int global = _inventory.GlobalCount(kind);
+            int local = _inventory.LocalCount(kind);
+            string label = global > 0 ? $"×{global}" : string.Empty;
+            if (local > 0) {
+                label += $"{LocalColorTag}+{local}</color>";
+            }
+
+            items.Add((kind, label));
         }
 
         bool visible = _backpackRevealed && items.Count > 0;

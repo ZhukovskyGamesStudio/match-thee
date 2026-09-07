@@ -175,6 +175,7 @@ public class WorldView : MonoBehaviour {
 
     private void ScrollTo(Vector2Int screen) {
         _screen = screen;
+        Model.SetScreen(screen);
         _scrollFrom = _camera.transform.position;
         _scrollTo = CameraPosition(screen);
         _scrollProgress = 0f;
@@ -208,6 +209,7 @@ public class WorldView : MonoBehaviour {
 
         Cursor.Hide();
         _screen = _snapshotScreen;
+        Model.SetScreen(_screen);
         _scrollProgress = 1f;
         _camera.transform.position = CameraPosition(_screen);
     }
@@ -265,6 +267,7 @@ public class WorldView : MonoBehaviour {
         _camera.orthographic = true;
         _screen = Model.Hero != null ? Model.ScreenContaining(Model.Hero.Position, Vector2Int.zero) : Vector2Int.zero;
         _camera.transform.position = CameraPosition(_screen);
+        Model.SetScreen(_screen);
         FitCamera();
         if (_screen == Vector2Int.zero) {
             Hud.RevealRestart();

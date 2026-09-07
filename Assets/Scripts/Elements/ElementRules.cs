@@ -14,10 +14,9 @@ public static class ElementRules {
             or ElementKind.MouseClick;
     }
 
-    // Непроходимое и неподвижное: в ряды не собирается и не исчезает.
+    // Непроходимое и неподвижное: в ряды не собирается и не исчезает. Стены замка — обычные элементы.
     public static bool IsSolid(ElementKind kind) {
-        return kind is ElementKind.Wall or ElementKind.CastleWall or ElementKind.CastleWall2 or ElementKind.CastleWall3
-            or ElementKind.CastleWindow;
+        return kind == ElementKind.Wall;
     }
 
     // Стеновая растительность: из неё генератор складывает стены.

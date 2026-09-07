@@ -36,6 +36,7 @@ public class WorldPainterWindow : EditorWindow {
     private readonly HashSet<Vector2Int> _runs = new(); // (x, row)
     private int _screensX = 1;
     private int _screensY = 1;
+    private bool _stroke; // штрих начат нажатием внутри карты: только такие протяжки рисуют
 
     [MenuItem("Match Thee/World Painter")]
     public static void Open() {
@@ -220,6 +221,10 @@ public class WorldPainterWindow : EditorWindow {
 
     private void HandleMapMouse(Rect area) {
         Event e = Event.current;
+        if (e.type == EventType.MouseUp || e.rawType == EventType.MouseUp) {
+            _stroke = false;
+        }
+
         if (!area.Contains(e.mousePosition)) {
             if (_hover.x >= 0 && e.type == EventType.MouseMove) {
                 _hover = new Vector2Int(-1, -1);
@@ -237,7 +242,10 @@ public class WorldPainterWindow : EditorWindow {
             return;
         }
 
-        if (e.type != EventType.MouseDown && e.type != EventType.MouseDrag) {
+        if (e.type == EventType.MouseDown) {
+            _stroke = true;
+        } else if (e.type != EventType.MouseDrag || !_stroke) {
+            // Протяжка после клика по палитре или из-за пределов карты — не рисуем.
             return;
         }
 

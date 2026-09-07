@@ -41,7 +41,6 @@ public class SoundView : MonoBehaviour {
         model.GameWon += OnGameWon;
         model.Restored += OnRestored;
         model.Inventory.Added += OnResourceAdded;
-        model.Inventory.Unlocked += OnKindUnlocked;
     }
 
     private void OnDestroy() {
@@ -53,7 +52,6 @@ public class SoundView : MonoBehaviour {
         _model.GameWon -= OnGameWon;
         _model.Restored -= OnRestored;
         _model.Inventory.Added -= OnResourceAdded;
-        _model.Inventory.Unlocked -= OnKindUnlocked;
     }
 
     // Звук шага должен идти в момент нажатия: буфер звукового движка минимальный. Reset останавливает
@@ -140,11 +138,8 @@ public class SoundView : MonoBehaviour {
         Play("restart");
     }
 
-    private void OnResourceAdded(ElementKind kind, int amount) {
-        Play("pickup");
-    }
-
-    private void OnKindUnlocked(ElementKind kind) {
-        Play("unlock");
+    // Ряд из пяти (ресурс на все экраны) звучит как фанфара, ряд из четырёх — обычный «+1».
+    private void OnResourceAdded(ElementKind kind, int amount, bool everywhere) {
+        Play(everywhere ? "unlock" : "pickup");
     }
 }

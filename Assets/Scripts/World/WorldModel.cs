@@ -16,9 +16,9 @@ public class WorldModel {
     public const bool ThroneSwapAdjacentOnly = true;
 
     // Что даёт группа по длине самого длинного прямого ряда в ней: три — просто исчезает,
-    // четыре — один расходуемый ресурс, пять — вид открыт для превращения навсегда.
-    public const int ResourceRunLength = 4;
-    public const int UnlockRunLength = 5;
+    // четыре — один ресурс только на этом экране, пять — один ресурс на всех экранах.
+    public const int LocalRunLength = 4;
+    public const int GlobalRunLength = 5;
 
     public int Width { get; }
     public int Height { get; }
@@ -28,6 +28,7 @@ public class WorldModel {
     // Превращение: во что сейчас превращён герой (None — сам собой). В сетке рядов его клетка считается этим видом.
     public ElementKind HeroForm { get; private set; } = ElementKind.None;
     public bool IsHeroTransformed => HeroForm != ElementKind.None;
+    public Vector2Int CurrentScreen { get; private set; }
     public Inventory Inventory { get; } = new();
     public IEnumerable<WorldEntity> Floors => _floors.Values;
     public IEnumerable<WorldEntity> Objects => _objects.Values;
@@ -49,8 +50,7 @@ public class WorldModel {
     private class Snapshot {
         public ElementKind[,] Objects;
         public ElementKind HeroForm;
-        public Dictionary<ElementKind, int> Counts;
-        public HashSet<ElementKind> Unlocked;
+        public Inventory.State Backpack;
     }
 
     private Snapshot _snapshot;
@@ -195,7 +195,7 @@ public class WorldModel {
             return false;
         }
 
-        if (!Inventory.IsUnlocked(kind) && Inventory.Count(kind) <= 0) {
+        if (Inventory.Count(kind) <= 0) {
             return false;
         }
 
@@ -245,6 +245,17 @@ public class WorldModel {
         return IsHeroTransformed ? HeroForm : ElementKind.Person;
     }
 
+    // Экран, где стоит герой: от него зависят доступные местные ресурсы. Если форма героя осталась
+    // на прошлом экране (местный ресурс не переносится) — герой становится собой.
+    public void SetScreen(Vector2Int screen) {
+        CurrentScreen = screen;
+        Inventory.Screen = screen;
+        if (Hero != null && IsHeroTransformed && Inventory.Count(HeroForm) <= 0) {
+            SetHeroForm(ElementKind.None);
+            ResolveMatches();
+        }
+    }
+
     public void SaveSnapshot() {
         ElementKind[,] objects = new ElementKind[Width, Height];
         foreach (WorldEntity entity in _objects.Values) {
@@ -254,8 +265,7 @@ public class WorldModel {
         _snapshot = new Snapshot {
             Objects = objects,
             HeroForm = HeroForm,
-            Counts = Inventory.Counts.ToDictionary(pair => pair.Key, pair => pair.Value),
-            Unlocked = new HashSet<ElementKind>(Inventory.UnlockedKinds),
+            Backpack = Inventory.Save(),
         };
     }
 
@@ -290,7 +300,7 @@ public class WorldModel {
             _cells[Hero.Position.x, Hero.Position.y] = CellKind(Hero);
         }
 
-        Inventory.Restore(_snapshot.Counts, _snapshot.Unlocked);
+        Inventory.Restore(_snapshot.Backpack);
         Restored?.Invoke();
         return true;
     }
@@ -324,7 +334,7 @@ public class WorldModel {
 
     // Ряды из трёх и более одинаковых элементов исчезают. Связная группа одного вида
     // (ряд, крест, уголок) награждает по длине самого длинного прямого ряда в ней (см. константы выше).
-    // Группа с превращённым героем награды не даёт: остальные элементы исчезают, герой становится собой.
+    // В группе с превращённым героем соседи исчезают, герой становится собой; награда — см. ветку ниже.
     // Группа персонажей с героем — конец игры: герой исчезает вместе с ними.
     private void ResolveMatches() {
         List<Vector2Int> runs = WorldMap.FindRuns(_cells);
@@ -369,10 +379,10 @@ public class WorldModel {
 
             if (!withHero) {
                 int longest = LongestRun(group);
-                if (longest >= UnlockRunLength) {
-                    Inventory.Unlock(kind);
-                } else if (longest >= ResourceRunLength) {
-                    Inventory.Add(kind, 1);
+                if (longest >= GlobalRunLength) {
+                    Inventory.Add(kind, 1, everywhere: true);
+                } else if (longest >= LocalRunLength) {
+                    Inventory.Add(kind, 1, everywhere: false);
                 }
             } else if (kind == ElementKind.Person) {
                 Remove(Hero);
@@ -381,8 +391,12 @@ public class WorldModel {
                 HeroForm = ElementKind.None;
                 won = true;
             } else {
-                // Герой исчез в ряду вместе с соседями: «надетый» расходуемый предмет потрачен.
-                if (Features.TransformationCostsResource && !Inventory.IsUnlocked(kind)) {
+                // Ряд с героем: тройка съедает «надетый» предмет, четвёрка возвращает его (ничего не тратится),
+                // пятёрка тоже ничего не тратит и даёт +1 на всех экранах.
+                int longest = LongestRun(group);
+                if (longest >= GlobalRunLength) {
+                    Inventory.Add(kind, 1, everywhere: true);
+                } else if (longest < LocalRunLength && Features.TransformationCostsResource) {
                     Inventory.TryTake(kind, 1);
                 }
 
