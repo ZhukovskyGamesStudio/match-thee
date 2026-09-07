@@ -22,13 +22,13 @@ public class MenuView : MonoBehaviour {
 
     private Image _title;
     private Image _button;
+    private PixelCursor _pointer;
     private Sprite[] _titleFrames;
     private Sprite[] _buttonFrames;
     private int _lastWidth;
     private int _lastHeight;
 
     private void Awake() {
-        Cursor.visible = true;
         _titleFrames = LoadFrames("title");
         _buttonFrames = LoadFrames("play_text");
 
@@ -48,6 +48,8 @@ public class MenuView : MonoBehaviour {
         colors.pressedColor = PressedColor;
         button.colors = colors;
         button.onClick.AddListener(Play);
+        _pointer = PixelCursor.Create(transform, _elements, 1f);
+        _pointer.Visible = true;
         Layout();
     }
 
@@ -77,6 +79,7 @@ public class MenuView : MonoBehaviour {
         float buttonPixel = Mathf.Max(1f, Mathf.Round(Screen.height * ButtonPixel));
         Place(_title.rectTransform, new Vector2(0f, Screen.height * TitleOffset), _titleFrames[0].rect.size * titlePixel);
         Place(_button.rectTransform, new Vector2(0f, Screen.height * ButtonOffset), _buttonFrames[0].rect.size * buttonPixel);
+        _pointer.SetSize(Screen.height / 18f); // как клетка игрового экрана
     }
 
     private Image CreateImage(string name, Sprite sprite, bool raycast) {

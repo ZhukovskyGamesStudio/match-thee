@@ -4,7 +4,14 @@ public static class ElementRules {
     // Пол: по нему ходят, его не толкают и в ряды он не собирается. Трон — декоративная клетка пола.
     public static bool IsFloor(ElementKind kind) {
         return kind is ElementKind.Grass or ElementKind.Water or ElementKind.Lava or ElementKind.Ice or ElementKind.Sand
-            or ElementKind.Throne or ElementKind.CastleFloor;
+            or ElementKind.Throne or ElementKind.CastleFloor || IsTutorialDecor(kind);
+    }
+
+    // Подсказки обучения: клавиши, стрелки, мышка. Пол, ни на что не влияет.
+    public static bool IsTutorialDecor(ElementKind kind) {
+        return kind is ElementKind.KeyW or ElementKind.KeyA or ElementKind.KeyS or ElementKind.KeyD
+            or ElementKind.ArrowUp or ElementKind.ArrowLeft or ElementKind.ArrowDown or ElementKind.ArrowRight
+            or ElementKind.MouseClick;
     }
 
     // Непроходимое и неподвижное: в ряды не собирается и не исчезает.

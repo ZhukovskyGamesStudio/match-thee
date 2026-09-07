@@ -51,8 +51,10 @@ public class PlayerInput : MonoBehaviour {
             }
         }
 
-        // Мышь видна на троне, пока открыт рюкзак и когда на финале появилась кнопка.
-        Cursor.visible = throne || (_world.Hud != null && _world.Hud.WantsCursor);
+        // Пиксельный курсор виден на троне и когда на финале появилась кнопка; системный скрыт всегда.
+        if (_world.Hud != null) {
+            _world.Hud.Pointer.Visible = throne || _world.Hud.WantsCursor;
+        }
 
         if (throne) {
             UpdateMouse(model);

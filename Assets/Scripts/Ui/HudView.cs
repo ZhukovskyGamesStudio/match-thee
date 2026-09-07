@@ -104,6 +104,7 @@ public class HudView : MonoBehaviour {
     private int _lastHeight;
 
     public bool WantsCursor => _replayShown;
+    public PixelCursor Pointer { get; private set; }
     public bool RestartAvailable => _restartRevealed;
 
     public void Init(ElementsConfig elements, float aspect, WorldModel model, System.Action restart) {
@@ -144,6 +145,7 @@ public class HudView : MonoBehaviour {
         _transition.raycastTarget = true;
         Stretch(_transition.rectTransform, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero);
         _transition.gameObject.SetActive(false);
+        Pointer = PixelCursor.Create(transform, _elements, 1f);
         Layout();
 
         _inventory.Added += OnResourceAdded;
@@ -287,6 +289,7 @@ public class HudView : MonoBehaviour {
         _backpack.anchorMin = new Vector2(0f, 1f);
         _backpack.anchorMax = new Vector2(0f, 1f);
         _backpack.pivot = new Vector2(0.5f, 0.5f);
+        Pointer.SetSize(inner.height / _model.ScreenHeight); // курсор размером с клетку
         _backpackHome = new Vector2(_padding + _backpackSize / 2f, -(_padding + _backpackSize / 2f));
         _backpack.anchoredPosition = _backpackHome;
         _backpack.sizeDelta = new Vector2(_backpackSize, _backpackSize);

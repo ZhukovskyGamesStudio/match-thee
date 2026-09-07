@@ -78,7 +78,6 @@ public class WorldView : MonoBehaviour {
             Model.Restored -= OnRestored;
         }
 
-        UnityEngine.Cursor.visible = true;
     }
 
     private void Update() {

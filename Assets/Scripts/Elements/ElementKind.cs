@@ -77,4 +77,15 @@ public enum ElementKind {
     CastleWall3,
     CastleWindow,
     CastleFloor,
+
+    // Декор для обучения: клетки пола с подсказками — клавиши, стрелки, мышка.
+    KeyW,
+    KeyA,
+    KeyS,
+    KeyD,
+    ArrowUp,
+    ArrowLeft,
+    ArrowDown,
+    ArrowRight,
+    MouseClick,
 }

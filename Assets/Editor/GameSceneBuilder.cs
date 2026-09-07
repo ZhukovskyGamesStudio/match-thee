@@ -128,6 +128,9 @@ public static class GameSceneBuilder {
         ("Y", ElementKind.Spruce), ("i", ElementKind.BerryBush), ("q", ElementKind.DarkTree), ("k", ElementKind.Birch), ("h", ElementKind.Stump),
         ("1", ElementKind.CastleWall), ("2", ElementKind.CastleWall2), ("3", ElementKind.CastleWall3), ("0", ElementKind.CastleWindow),
         ("=", ElementKind.CastleFloor),
+        ("4", ElementKind.KeyW), ("5", ElementKind.KeyA), ("6", ElementKind.KeyS), ("7", ElementKind.KeyD),
+        ("{", ElementKind.ArrowUp), ("[", ElementKind.ArrowLeft), ("}", ElementKind.ArrowDown), ("]", ElementKind.ArrowRight),
+        ("?", ElementKind.MouseClick),
     };
 
     private static double _nextCheckTime;
