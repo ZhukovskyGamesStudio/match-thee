@@ -9,9 +9,16 @@ public class ElementView : MonoBehaviour {
     private const float BumpDistance = 0.3f;
     private const float VanishDuration = 0.3f;
     private const float VanishPopScale = 1.3f;
+    private const float FormPopDuration = 0.2f;
+    private const float FormPopScale = 1.3f;
 
     private SpriteRenderer _renderer;
+    private SpriteRenderer _crown; // только у героя: корона поверх формы превращения
+    private ElementsConfig _elements;
     private Sprite[] _frames;
+    private Sprite[] _crownFrames;
+    private ElementKind _form = ElementKind.None;
+    private float _formPopProgress = 1f;
     private Vector3 _shiftFrom;
     private Vector3 _shiftTo;
     private float _shiftDuration = ShiftDuration;
@@ -27,22 +34,52 @@ public class ElementView : MonoBehaviour {
 
     public void Init(WorldEntity entity, ElementsConfig elements, int sortingOrder) {
         Entity = entity;
+        _elements = elements;
         _renderer = GetComponent<SpriteRenderer>();
         _renderer.sortingOrder = sortingOrder;
+        _frames = LoadFrames(entity.Kind);
 
-        _frames = new Sprite[ElementRules.WobbleFrames];
-        for (int i = 0; i < _frames.Length; i++) {
-            _frames[i] = elements.GetFrame(entity.Kind, i);
+        if (entity.Kind == ElementKind.Hero) {
+            GameObject crownObject = new("Crown", typeof(SpriteRenderer));
+            crownObject.transform.SetParent(transform, false);
+            _crown = crownObject.GetComponent<SpriteRenderer>();
+            _crown.sortingOrder = sortingOrder + 1;
+            _crown.enabled = false;
+            _crownFrames = LoadFrames("crown");
         }
 
         _shiftFrom = _shiftTo = ToWorld(entity.Position);
         transform.position = _shiftTo;
     }
 
+    // Превращение героя: кадры формы (или свои, если None) и корона сверху; коротко раздувается.
+    public void SetForm(ElementKind form) {
+        _form = form;
+        _frames = LoadFrames(form == ElementKind.None ? Entity.Kind : form);
+        if (_crown != null) {
+            _crown.enabled = form != ElementKind.None;
+        }
+
+        _formPopProgress = 0f;
+    }
+
+    private Sprite[] LoadFrames(ElementKind kind) {
+        return LoadFrames(kind.ToString().ToLowerInvariant());
+    }
+
+    private Sprite[] LoadFrames(string name) {
+        Sprite[] frames = new Sprite[ElementRules.WobbleFrames];
+        for (int i = 0; i < frames.Length; i++) {
+            frames[i] = _elements.GetFrame(name, i);
+        }
+
+        return frames;
+    }
+
     // Смещение: плавный проезд до новой клетки (толчок героем или обмен с трона).
     public void MoveTo(Vector2Int cell) {
         Vector3 next = ToWorld(cell);
-        if (ElementRules.IsCreature(Entity.Kind) && !Mathf.Approximately(next.x, _shiftTo.x)) {
+        if (_form == ElementKind.None && ElementRules.IsCreature(Entity.Kind) && !Mathf.Approximately(next.x, _shiftTo.x)) {
             _renderer.flipX = next.x < _shiftTo.x;
         }
 
@@ -68,6 +105,14 @@ public class ElementView : MonoBehaviour {
         // Дрожание как в Baba Is You: все элементы переключают кадры синхронно.
         int frame = (int)(Time.time * WobbleFps) % _frames.Length;
         _renderer.sprite = _frames[frame];
+        if (_crown != null && _crown.enabled) {
+            _crown.sprite = _crownFrames[frame];
+        }
+
+        if (_formPopProgress < 1f) {
+            _formPopProgress = Mathf.Min(1f, _formPopProgress + Time.deltaTime / FormPopDuration);
+            transform.localScale = Vector3.one * (1f + (FormPopScale - 1f) * Mathf.Sin(_formPopProgress * Mathf.PI));
+        }
 
         if (_vanishProgress >= 0f) {
             UpdateVanish();

@@ -27,7 +27,9 @@ public class WorldConfig : ScriptableObject {
     public string FillerSymbol { get; private set; } = "%";
 
     [field: SerializeField]
-    public List<ElementKind> FillerKinds { get; private set; } = new() { ElementKind.Tree, ElementKind.Bush, ElementKind.Rock };
+    public List<ElementKind> FillerKinds { get; private set; } = new() {
+        ElementKind.Spruce, ElementKind.BerryBush, ElementKind.DarkTree, ElementKind.Birch, ElementKind.Stump,
+    };
 
     [field: SerializeField, TextArea(8, 40)]
     public string Map { get; private set; }

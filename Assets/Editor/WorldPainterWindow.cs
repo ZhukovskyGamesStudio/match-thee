@@ -160,7 +160,7 @@ public class WorldPainterWindow : EditorWindow {
 
     private IEnumerable<(char, string, Sprite)> PaletteEntries() {
         yield return (Empty, "пусто", null);
-        yield return (_config.Filler, "стена", _elements.GetFrame(ElementKind.Tree, 0));
+        yield return (_config.Filler, "стена", _elements.GetFrame(ElementKind.Spruce, 0));
         foreach (LegendEntry entry in _config.Legend) {
             if (!string.IsNullOrEmpty(entry.Symbol)) {
                 yield return (entry.Symbol[0], entry.Kind.ToString(), _elements.GetFrame(entry.Kind, 0));
@@ -260,6 +260,17 @@ public class WorldPainterWindow : EditorWindow {
         }
 
         Undo.RecordObject(_config, "Paint World");
+        // Герой на карте один: новый '@' стирает прежнего.
+        if (_config.KindOf(symbol) == ElementKind.Hero) {
+            for (int otherRow = 0; otherRow < _height; otherRow++) {
+                for (int otherX = 0; otherX < _width; otherX++) {
+                    if (_config.KindOf(_cells[otherX, otherRow]) == ElementKind.Hero) {
+                        _cells[otherX, otherRow] = Empty;
+                    }
+                }
+            }
+        }
+
         _cells[x, row] = symbol;
         _runs.Clear();
         WriteMap();
@@ -315,7 +326,7 @@ public class WorldPainterWindow : EditorWindow {
 
     private void DrawSymbol(Rect rect, char symbol) {
         if (symbol == _config.Filler) {
-            DrawSprite(rect, _elements.GetFrame(ElementKind.Tree, 0), FillerTint);
+            DrawSprite(rect, _elements.GetFrame(ElementKind.Spruce, 0), FillerTint);
             return;
         }
 

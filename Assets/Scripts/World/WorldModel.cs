@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 public enum SwapResult {
@@ -14,11 +15,19 @@ public class WorldModel {
     // Своп с трона только между соседними клетками, как в классических три-в-ряд.
     public const bool ThroneSwapAdjacentOnly = true;
 
+    // Что даёт группа по длине самого длинного прямого ряда в ней: три — просто исчезает,
+    // четыре — один расходуемый ресурс, пять — вид открыт для превращения навсегда.
+    public const int ResourceRunLength = 4;
+    public const int UnlockRunLength = 5;
+
     public int Width { get; }
     public int Height { get; }
     public int ScreenWidth { get; }
     public int ScreenHeight { get; }
     public WorldEntity Hero { get; private set; }
+    // Превращение: во что сейчас превращён герой (None — сам собой). В сетке рядов его клетка считается этим видом.
+    public ElementKind HeroForm { get; private set; } = ElementKind.None;
+    public bool IsHeroTransformed => HeroForm != ElementKind.None;
     public Inventory Inventory { get; } = new();
     public IEnumerable<WorldEntity> Floors => _floors.Values;
     public IEnumerable<WorldEntity> Objects => _objects.Values;
@@ -32,6 +41,19 @@ public class WorldModel {
 
     public event Action<WorldEntity> EntityMoved;
     public event Action<IReadOnlyList<WorldEntity>> EntitiesMatched;
+    public event Action<ElementKind> HeroFormChanged;
+    public event Action GameWon; // герой соединился с персонажами и исчез
+    public event Action Restored; // мир откатился к снимку комнаты: вью пересобираются заново
+
+    // Снимок комнаты: слой предметов, форма героя и рюкзак на момент входа. R возвращает к нему.
+    private class Snapshot {
+        public ElementKind[,] Objects;
+        public ElementKind HeroForm;
+        public Dictionary<ElementKind, int> Counts;
+        public HashSet<ElementKind> Unlocked;
+    }
+
+    private Snapshot _snapshot;
 
     private readonly Dictionary<Vector2Int, WorldEntity> _floors = new();
     private readonly Dictionary<Vector2Int, WorldEntity> _objects = new();
@@ -57,10 +79,11 @@ public class WorldModel {
                     continue;
                 }
 
-                Place(entity, entity.Position);
                 if (kind == ElementKind.Hero) {
-                    Hero = entity;
+                    Hero = entity; // до Place: в сетке рядов клетка героя считается персонажем
                 }
+
+                Place(entity, entity.Position);
             }
         }
     }
@@ -165,6 +188,91 @@ public class WorldModel {
         return SwapResult.Swapped;
     }
 
+    // Превращение: герой принимает вид предмета из рюкзака. Если он сразу оказался в ряду — ряд исчезает.
+    public bool TryTransform(ElementKind kind) {
+        if (!Features.Transformation || Hero == null || !ElementRules.IsPushable(kind) || kind == HeroForm) {
+            return false;
+        }
+
+        bool unlocked = Inventory.IsUnlocked(kind);
+        if (!unlocked && Inventory.Count(kind) <= 0) {
+            return false;
+        }
+
+        if (!unlocked && Features.TransformationCostsResource && !Inventory.TryTake(kind, 1)) {
+            return false;
+        }
+
+        SetHeroForm(kind);
+        ResolveMatches();
+        return true;
+    }
+
+    private void SetHeroForm(ElementKind kind) {
+        HeroForm = kind;
+        _cells[Hero.Position.x, Hero.Position.y] = CellKind(Hero);
+        HeroFormChanged?.Invoke(kind);
+    }
+
+    // Герой в сетке рядов: его форма превращения, а без неё — персонаж (ряд с персонажами завершает игру).
+    private ElementKind CellKind(WorldEntity entity) {
+        if (entity != Hero) {
+            return entity.Kind;
+        }
+
+        return IsHeroTransformed ? HeroForm : ElementKind.Person;
+    }
+
+    public void SaveSnapshot() {
+        ElementKind[,] objects = new ElementKind[Width, Height];
+        foreach (WorldEntity entity in _objects.Values) {
+            objects[entity.Position.x, entity.Position.y] = entity.Kind;
+        }
+
+        _snapshot = new Snapshot {
+            Objects = objects,
+            HeroForm = HeroForm,
+            Counts = Inventory.Counts.ToDictionary(pair => pair.Key, pair => pair.Value),
+            Unlocked = new HashSet<ElementKind>(Inventory.UnlockedKinds),
+        };
+    }
+
+    // Откат к снимку: предметы пересоздаются заново (старые сущности больше не действительны).
+    public bool Restore() {
+        if (_snapshot == null) {
+            return false;
+        }
+
+        _objects.Clear();
+        Array.Clear(_cells, 0, _cells.Length);
+        Hero = null;
+        HeroForm = ElementKind.None;
+        for (int y = 0; y < Height; y++) {
+            for (int x = 0; x < Width; x++) {
+                ElementKind kind = _snapshot.Objects[x, y];
+                if (kind == ElementKind.None) {
+                    continue;
+                }
+
+                WorldEntity entity = new(kind, new Vector2Int(x, y));
+                if (kind == ElementKind.Hero) {
+                    Hero = entity;
+                }
+
+                Place(entity, entity.Position);
+            }
+        }
+
+        HeroForm = _snapshot.HeroForm;
+        if (Hero != null) {
+            _cells[Hero.Position.x, Hero.Position.y] = CellKind(Hero);
+        }
+
+        Inventory.Restore(_snapshot.Counts, _snapshot.Unlocked);
+        Restored?.Invoke();
+        return true;
+    }
+
     private bool CanEnter(Vector2Int cell) {
         if (!IsInside(cell)) {
             return false;
@@ -184,7 +292,7 @@ public class WorldModel {
     private void Place(WorldEntity entity, Vector2Int cell) {
         entity.Position = cell;
         _objects[cell] = entity;
-        _cells[cell.x, cell.y] = entity.Kind;
+        _cells[cell.x, cell.y] = CellKind(entity);
     }
 
     private void Remove(WorldEntity entity) {
@@ -193,7 +301,9 @@ public class WorldModel {
     }
 
     // Ряды из трёх и более одинаковых элементов исчезают. Связная группа одного вида
-    // (ряд, крест, уголок) даёт один ресурс своего вида.
+    // (ряд, крест, уголок) награждает по длине самого длинного прямого ряда в ней (см. константы выше).
+    // Группа с превращённым героем награды не даёт: остальные элементы исчезают, герой становится собой.
+    // Группа персонажей с героем — конец игры: герой исчезает вместе с ними.
     private void ResolveMatches() {
         List<Vector2Int> runs = WorldMap.FindRuns(_cells);
         if (runs.Count == 0) {
@@ -204,6 +314,8 @@ public class WorldModel {
         HashSet<Vector2Int> visited = new();
         List<WorldEntity> matched = new();
         Stack<Vector2Int> stack = new();
+        HashSet<Vector2Int> group = new();
+        bool won = false;
 
         foreach (Vector2Int start in runs) {
             if (!visited.Add(start)) {
@@ -211,9 +323,12 @@ public class WorldModel {
             }
 
             ElementKind kind = _cells[start.x, start.y];
+            bool withHero = false;
+            group.Clear();
             stack.Push(start);
             while (stack.Count > 0) {
                 Vector2Int cell = stack.Pop();
+                group.Add(cell);
                 foreach (Vector2Int neighbor in Neighbors(cell)) {
                     if (runCells.Contains(neighbor) && _cells[neighbor.x, neighbor.y] == kind && visited.Add(neighbor)) {
                         stack.Push(neighbor);
@@ -221,16 +336,61 @@ public class WorldModel {
                 }
 
                 WorldEntity entity = ObjectAt(cell);
-                if (entity != null) {
+                if (entity == Hero) {
+                    withHero = true;
+                } else if (entity != null) {
                     Remove(entity);
                     matched.Add(entity);
                 }
             }
 
-            Inventory.Add(kind, 1);
+            if (!withHero) {
+                int longest = LongestRun(group);
+                if (longest >= UnlockRunLength) {
+                    Inventory.Unlock(kind);
+                } else if (longest >= ResourceRunLength) {
+                    Inventory.Add(kind, 1);
+                }
+            } else if (kind == ElementKind.Person) {
+                Remove(Hero);
+                matched.Add(Hero);
+                Hero = null;
+                HeroForm = ElementKind.None;
+                won = true;
+            } else {
+                SetHeroForm(ElementKind.None);
+            }
         }
 
         EntitiesMatched?.Invoke(matched);
+        if (won) {
+            GameWon?.Invoke();
+        }
+    }
+
+    // Самый длинный прямой ряд (горизонтальный или вертикальный) внутри группы клеток.
+    private static int LongestRun(HashSet<Vector2Int> group) {
+        int longest = 0;
+        foreach (Vector2Int cell in group) {
+            if (!group.Contains(cell + Vector2Int.left)) {
+                longest = Math.Max(longest, RunLength(group, cell, Vector2Int.right));
+            }
+
+            if (!group.Contains(cell + Vector2Int.down)) {
+                longest = Math.Max(longest, RunLength(group, cell, Vector2Int.up));
+            }
+        }
+
+        return longest;
+    }
+
+    private static int RunLength(HashSet<Vector2Int> group, Vector2Int start, Vector2Int step) {
+        int length = 0;
+        for (Vector2Int cell = start; group.Contains(cell); cell += step) {
+            length++;
+        }
+
+        return length;
     }
 
     private static IEnumerable<Vector2Int> Neighbors(Vector2Int cell) {

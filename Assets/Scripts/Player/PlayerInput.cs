@@ -29,9 +29,15 @@ public class PlayerInput : MonoBehaviour {
         }
 
         WorldModel model = _world.Model;
+        if (keyboard.rKey.wasPressedThisFrame) {
+            _dragCell = null;
+            _world.RestoreRoom();
+            return;
+        }
+
         if (!_world.IsScrolling) {
             Vector2Int direction = ReadStep(keyboard);
-            if (direction != Vector2Int.zero) {
+            if (direction != Vector2Int.zero && !_world.TryScrollToNeighbor(direction)) {
                 model.TryMoveHero(direction);
             }
         }
@@ -39,12 +45,14 @@ public class PlayerInput : MonoBehaviour {
         bool throne = model.IsHeroOnThrone;
         if (throne != _throneMode) {
             _throneMode = throne;
-            Cursor.visible = throne;
             _dragCell = null;
             if (!throne) {
                 _world.Cursor.Hide();
             }
         }
+
+        // Мышь видна на троне, пока открыт рюкзак и когда на финале появилась кнопка.
+        Cursor.visible = throne || (_world.Hud != null && _world.Hud.WantsCursor);
 
         if (throne) {
             UpdateMouse(model);

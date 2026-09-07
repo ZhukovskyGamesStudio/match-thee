@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 // Строит мир из конфига, двигает вью вслед за моделью, перевозит камеру между экранами,
@@ -25,16 +26,28 @@ public class WorldView : MonoBehaviour {
     private float _scrollProgress = 1f;
     private int _lastWidth;
     private int _lastHeight;
+    private bool _snapshotPending; // снимок берём кадром позже входа, когда ход целиком разрешился
+    private Vector2Int _snapshotScreen;
 
     public WorldModel Model { get; private set; }
     public CursorView Cursor { get; private set; }
+    public HudView Hud { get; private set; }
     public Vector2Int Screen => _screen;
     public bool IsScrolling => _scrollProgress < 1f;
 
     private void Awake() {
-        Model = new WorldModel(_world.BuildCells(), _world.ScreenWidth, _world.ScreenHeight);
+        ElementKind[,] cells = _world.BuildCells();
+        int heroes = cells.Cast<ElementKind>().Count(kind => kind == ElementKind.Hero);
+        if (heroes != 1) {
+            Debug.LogWarning($"Match Thee: на карте {heroes} героев, нужен ровно один — управляется последний по порядку чтения карты");
+        }
+
+        Model = new WorldModel(cells, _world.ScreenWidth, _world.ScreenHeight);
         Model.EntityMoved += OnEntityMoved;
         Model.EntitiesMatched += OnEntitiesMatched;
+        Model.HeroFormChanged += OnHeroFormChanged;
+        Model.GameWon += OnGameWon;
+        Model.Restored += OnRestored;
 
         foreach (WorldEntity floor in Model.Floors) {
             Spawn(floor, FloorOrder);
@@ -48,12 +61,16 @@ public class WorldView : MonoBehaviour {
         CreateHud();
         SetupCamera();
         UnityEngine.Cursor.visible = false;
+        _snapshotPending = true;
     }
 
     private void OnDestroy() {
         if (Model != null) {
             Model.EntityMoved -= OnEntityMoved;
             Model.EntitiesMatched -= OnEntitiesMatched;
+            Model.HeroFormChanged -= OnHeroFormChanged;
+            Model.GameWon -= OnGameWon;
+            Model.Restored -= OnRestored;
         }
 
         UnityEngine.Cursor.visible = true;
@@ -62,6 +79,12 @@ public class WorldView : MonoBehaviour {
     private void Update() {
         if (UnityEngine.Screen.width != _lastWidth || UnityEngine.Screen.height != _lastHeight) {
             FitCamera();
+        }
+
+        if (_snapshotPending) {
+            _snapshotPending = false;
+            Model.SaveSnapshot();
+            _snapshotScreen = _screen;
         }
 
         if (!IsScrolling) {
@@ -76,6 +99,27 @@ public class WorldView : MonoBehaviour {
         Vector3 world = _camera.ScreenToWorldPoint(new Vector3(screenPosition.x, screenPosition.y, -_camera.transform.position.z));
         world.z = 0f;
         return world;
+    }
+
+    // Герой стоит на общей крайней клетке и шагает наружу текущего экрана: камера переезжает
+    // на соседний экран, а герой остаётся на месте. Следующий шаг уже обычный.
+    public bool TryScrollToNeighbor(Vector2Int direction) {
+        if (Model.Hero == null) {
+            return false;
+        }
+
+        Vector2Int target = Model.Hero.Position + direction;
+        if (!Model.IsInside(target) || Model.IsInScreen(_screen, target)) {
+            return false;
+        }
+
+        Vector2Int screen = Model.ScreenContaining(target, _screen);
+        if (screen == _screen) {
+            return false;
+        }
+
+        ScrollTo(screen);
+        return true;
     }
 
     // Неудачное смещение: элемент в клетке дёргается в сторону цели.
@@ -104,7 +148,8 @@ public class WorldView : MonoBehaviour {
 
     private void CreateHud() {
         GameObject hudObject = new("Hud", typeof(RectTransform));
-        hudObject.AddComponent<HudView>().Init(_elements, (float)Model.ScreenWidth / Model.ScreenHeight);
+        Hud = hudObject.AddComponent<HudView>();
+        Hud.Init(_elements, (float)Model.ScreenWidth / Model.ScreenHeight, Model, RestoreRoom);
     }
 
     private void OnEntityMoved(WorldEntity entity) {
@@ -116,13 +161,56 @@ public class WorldView : MonoBehaviour {
             return;
         }
 
-        // Герой ушёл за край экрана — камера переезжает на соседний экран, мир бесшовный.
+        // Герой оказался вне экрана — камера переезжает на экран с ним, мир бесшовный.
         Vector2Int screen = Model.ScreenContaining(entity.Position, _screen);
         if (screen != _screen) {
-            _screen = screen;
-            _scrollFrom = _camera.transform.position;
-            _scrollTo = CameraPosition(screen);
-            _scrollProgress = 0f;
+            ScrollTo(screen);
+        }
+    }
+
+    private void ScrollTo(Vector2Int screen) {
+        _screen = screen;
+        _scrollFrom = _camera.transform.position;
+        _scrollTo = CameraPosition(screen);
+        _scrollProgress = 0f;
+        _snapshotPending = true; // вход в комнату: сохраняемся
+    }
+
+    // R: назад к моменту входа в комнату.
+    public void RestoreRoom() {
+        Model.Restore();
+    }
+
+    // Модель откатилась: вью предметов пересобираем с нуля, камера сразу на экран входа.
+    private void OnRestored() {
+        foreach (KeyValuePair<WorldEntity, ElementView> pair in _views.ToList()) {
+            if (!ElementRules.IsFloor(pair.Key.Kind)) {
+                Destroy(pair.Value.gameObject);
+                _views.Remove(pair.Key);
+            }
+        }
+
+        foreach (WorldEntity entity in Model.Objects) {
+            Spawn(entity, entity.Kind == ElementKind.Hero ? HeroOrder : ObjectOrder);
+        }
+
+        if (Model.Hero != null && Model.IsHeroTransformed && _views.TryGetValue(Model.Hero, out ElementView heroView)) {
+            heroView.SetForm(Model.HeroForm);
+        }
+
+        Cursor.Hide();
+        _screen = _snapshotScreen;
+        _scrollProgress = 1f;
+        _camera.transform.position = CameraPosition(_screen);
+    }
+
+    private void OnGameWon() {
+        Hud.ShowWin();
+    }
+
+    private void OnHeroFormChanged(ElementKind form) {
+        if (Model.Hero != null && _views.TryGetValue(Model.Hero, out ElementView view)) {
+            view.SetForm(form);
         }
     }
 

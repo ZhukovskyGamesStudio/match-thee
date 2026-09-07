@@ -3,11 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-// Разбор текстовой карты мира в сетку элементов. Клетки-заполнители (стены из перемешанных деревьев,
-// кустов и камней) раскладываются детерминированно так, чтобы три одинаковых элемента не стояли подряд
-// ни по горизонтали, ни по вертикали: иначе они бы сразу соединились и исчезли.
+// Разбор текстовой карты мира в сетку элементов. Клетки-заполнители (стены из стеновой растительности)
+// раскладываются детерминированно так, чтобы одинаковые элементы не стояли ближе WallSpacing клеток по прямой:
+// тогда ни один толчок или обмен с трона не сложит из стены ряд, а игрок видов стены не получает вовсе.
+// Учитываются и уже расставленные автором клетки (в том числе обычные кусты и деревья).
 public static class WorldMap {
     public const int MatchLength = 3;
+    public const int WallSpacing = 2;
 
     public static ElementKind[,] Parse(string[] rows, Func<char, ElementKind> kindOf, char fillerSymbol, IReadOnlyList<ElementKind> fillerKinds, int seed) {
         int height = rows.Length;
@@ -60,13 +62,40 @@ public static class WorldMap {
 
                 candidates.Clear();
                 candidates.AddRange(fillerKinds.OrderBy(_ => random.Next()));
-                candidates.AddRange(fallback);
 
-                // None остаётся только если не подошёл ни один толкаемый элемент; на реальных картах не случается.
-                cells[x, y] = candidates.FirstOrDefault(kind => !MakesRun(cells, x, y, kind));
+                // Лучше всего — стеновой вид без такого же в WallSpacing клетках по прямой; хуже — стеновой без ряда;
+                // совсем на крайний случай — любой толкаемый без ряда. None не случается на реальных картах.
+                ElementKind chosen = candidates.FirstOrDefault(kind => !HasSameWithin(cells, x, y, kind, WallSpacing));
+                if (chosen == ElementKind.None) {
+                    chosen = candidates.Concat(fallback).FirstOrDefault(kind => !MakesRun(cells, x, y, kind));
+                }
+
+                cells[x, y] = chosen;
                 pending[x, y] = false;
             }
         }
+    }
+
+    // Есть ли такой же элемент не дальше distance клеток по прямой в любую из четырёх сторон.
+    private static bool HasSameWithin(ElementKind[,] cells, int x, int y, ElementKind kind, int distance) {
+        return Run(cells, x, y, -1, 0, kind, distance) || Run(cells, x, y, 1, 0, kind, distance)
+            || Run(cells, x, y, 0, -1, kind, distance) || Run(cells, x, y, 0, 1, kind, distance);
+    }
+
+    private static bool Run(ElementKind[,] cells, int x, int y, int dx, int dy, ElementKind kind, int distance) {
+        for (int step = 1; step <= distance; step++) {
+            int cx = x + dx * step;
+            int cy = y + dy * step;
+            if (cx < 0 || cy < 0 || cx >= cells.GetLength(0) || cy >= cells.GetLength(1)) {
+                return false;
+            }
+
+            if (cells[cx, cy] == kind) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // Образует ли элемент kind в клетке (x, y) ряд из MatchLength одинаковых с уже известными соседями.

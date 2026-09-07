@@ -124,7 +124,10 @@ public static class GameSceneBuilder {
         (">", ElementKind.Arrow), ("o", ElementKind.Portal), ("m", ElementKind.Magnet), ("e", ElementKind.Bell),
         ("z", ElementKind.Ghost), ("j", ElementKind.Slime), ("v", ElementKind.Bat), ("f", ElementKind.Frog), ("d", ElementKind.Bird),
         ("u", ElementKind.Sun), ("n", ElementKind.Moon), ("y", ElementKind.Lightning), ("r", ElementKind.Fire),
-        ("t", ElementKind.Throne),
+        ("t", ElementKind.Throne), ("&", ElementKind.Person),
+        ("Y", ElementKind.Spruce), ("i", ElementKind.BerryBush), ("q", ElementKind.DarkTree), ("k", ElementKind.Birch), ("h", ElementKind.Stump),
+        ("1", ElementKind.CastleWall), ("2", ElementKind.CastleWall2), ("3", ElementKind.CastleWall3), ("0", ElementKind.CastleWindow),
+        ("=", ElementKind.CastleFloor),
     };
 
     private static double _nextCheckTime;

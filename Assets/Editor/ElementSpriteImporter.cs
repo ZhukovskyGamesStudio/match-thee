@@ -6,8 +6,8 @@ using UnityEditor;
 using UnityEditor.U2D.Sprites;
 using UnityEngine;
 
-// Спрайты элементов мира: пиксель-арт 24x24, три кадра дрожания в одной полоске (72x24).
-// При импорте выставляет Point-фильтр и PPU и режет полоску на кадры <name>_0, _1, _2.
+// Спрайты элементов мира: пиксель-арт, три кадра дрожания в одной полоске (элементы 24x24 → 72x24,
+// надписи — своей ширины). При импорте выставляет Point-фильтр и PPU и режет полоску на кадры <name>_0, _1, _2.
 public class ElementSpriteImporter : AssetPostprocessor {
     private const string ElementsFolder = "Assets/Sprites/Elements/";
     private const int FrameSize = 24;
@@ -46,7 +46,8 @@ public class ElementSpriteImporter : AssetPostprocessor {
             return;
         }
 
-        int frames = Mathf.Max(1, width / FrameSize);
+        int frames = ElementRules.WobbleFrames;
+        int frameWidth = width / frames;
         string baseName = Path.GetFileNameWithoutExtension(assetPath);
 
         SpriteDataProviderFactories factory = new();
@@ -65,7 +66,7 @@ public class ElementSpriteImporter : AssetPostprocessor {
             string spriteName = $"{baseName}_{i}";
             rects[i] = new SpriteRect {
                 name = spriteName,
-                rect = new Rect(i * FrameSize, 0, FrameSize, height),
+                rect = new Rect(i * frameWidth, 0, frameWidth, height),
                 alignment = SpriteAlignment.Center,
                 pivot = new Vector2(0.5f, 0.5f),
                 spriteID = existingIds.TryGetValue(spriteName, out GUID id) ? id : StableGuid(assetPath + spriteName)
