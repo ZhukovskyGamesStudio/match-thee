@@ -188,24 +188,46 @@ public class WorldModel {
         return SwapResult.Swapped;
     }
 
-    // Превращение: герой принимает вид предмета из рюкзака. Если он сразу оказался в ряду — ряд исчезает.
+    // Превращение: герой принимает вид предмета из рюкзака. Предмет остаётся в рюкзаке (он «надет»),
+    // тратится только если герой в этой форме исчез в ряду. Если герой сразу оказался в ряду — ряд исчезает.
     public bool TryTransform(ElementKind kind) {
         if (!Features.Transformation || Hero == null || !ElementRules.IsPushable(kind) || kind == HeroForm) {
             return false;
         }
 
-        bool unlocked = Inventory.IsUnlocked(kind);
-        if (!unlocked && Inventory.Count(kind) <= 0) {
-            return false;
-        }
-
-        if (!unlocked && Features.TransformationCostsResource && !Inventory.TryTake(kind, 1)) {
+        if (!Inventory.IsUnlocked(kind) && Inventory.Count(kind) <= 0) {
             return false;
         }
 
         SetHeroForm(kind);
         ResolveMatches();
         return true;
+    }
+
+    // Обратно в себя: предмет возвращается в рюкзак.
+    public bool TransformBack() {
+        if (Hero == null || !IsHeroTransformed) {
+            return false;
+        }
+
+        SetHeroForm(ElementKind.None);
+        ResolveMatches();
+        return true;
+    }
+
+    // Q: по кругу — предметы рюкзака по порядку, затем снова сам герой.
+    public bool TransformNext() {
+        if (!Features.Transformation || Hero == null) {
+            return false;
+        }
+
+        List<ElementKind> kinds = Inventory.Kinds.ToList();
+        if (kinds.Count == 0) {
+            return false;
+        }
+
+        int index = IsHeroTransformed ? kinds.IndexOf(HeroForm) : -1;
+        return index + 1 < kinds.Count ? TryTransform(kinds[index + 1]) : TransformBack();
     }
 
     private void SetHeroForm(ElementKind kind) {
@@ -316,6 +338,7 @@ public class WorldModel {
         Stack<Vector2Int> stack = new();
         HashSet<Vector2Int> group = new();
         bool won = false;
+        bool revertHero = false;
 
         foreach (Vector2Int start in runs) {
             if (!visited.Add(start)) {
@@ -358,11 +381,21 @@ public class WorldModel {
                 HeroForm = ElementKind.None;
                 won = true;
             } else {
-                SetHeroForm(ElementKind.None);
+                // Герой исчез в ряду вместе с соседями: «надетый» расходуемый предмет потрачен.
+                if (Features.TransformationCostsResource && !Inventory.IsUnlocked(kind)) {
+                    Inventory.TryTake(kind, 1);
+                }
+
+                revertHero = true;
             }
         }
 
+        // Сначала событие об исчезнувших, потом возврат героя: вью успевает отложить возврат до конца исчезновения.
         EntitiesMatched?.Invoke(matched);
+        if (revertHero) {
+            SetHeroForm(ElementKind.None);
+        }
+
         if (won) {
             GameWon?.Invoke();
         }

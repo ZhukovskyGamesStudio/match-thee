@@ -27,11 +27,14 @@ public class WorldView : MonoBehaviour {
     private int _lastWidth;
     private int _lastHeight;
     private bool _snapshotPending; // снимок берём кадром позже входа, когда ход целиком разрешился
+    private int _vanishFrame = -1;  // кадр и задержка последнего исчезновения: возврат героя ждёт его конца
+    private float _vanishDelay;
     private Vector2Int _snapshotScreen;
 
     public WorldModel Model { get; private set; }
     public CursorView Cursor { get; private set; }
     public HudView Hud { get; private set; }
+    public SoundView Sound { get; private set; }
     public Vector2Int Screen => _screen;
     public bool IsScrolling => _scrollProgress < 1f;
 
@@ -43,6 +46,8 @@ public class WorldView : MonoBehaviour {
         }
 
         Model = new WorldModel(cells, _world.ScreenWidth, _world.ScreenHeight);
+        Sound = gameObject.AddComponent<SoundView>();
+        Sound.Init(Model);
         Model.EntityMoved += OnEntityMoved;
         Model.EntitiesMatched += OnEntitiesMatched;
         Model.HeroFormChanged += OnHeroFormChanged;
@@ -127,6 +132,7 @@ public class WorldView : MonoBehaviour {
         WorldEntity entity = Model.ObjectAt(cell);
         if (entity != null && _views.TryGetValue(entity, out ElementView view)) {
             view.Bump(direction);
+            Sound.Play("bump");
         }
     }
 
@@ -174,6 +180,9 @@ public class WorldView : MonoBehaviour {
         _scrollTo = CameraPosition(screen);
         _scrollProgress = 0f;
         _snapshotPending = true; // вход в комнату: сохраняемся
+        if (screen == Vector2Int.zero) {
+            Hud.RevealRestart(); // левая нижняя комната открывает рестарт
+        }
     }
 
     // R: назад к моменту входа в комнату.
@@ -208,13 +217,18 @@ public class WorldView : MonoBehaviour {
         Hud.ShowWin();
     }
 
+    // Возврат в себя после ряда с героем: ждём, пока соседи исчезнут. Обычная смена формы — сразу.
     private void OnHeroFormChanged(ElementKind form) {
+        float delay = form == ElementKind.None && _vanishFrame == Time.frameCount ? _vanishDelay + ElementView.VanishDuration : 0f;
         if (Model.Hero != null && _views.TryGetValue(Model.Hero, out ElementView view)) {
-            view.SetForm(form);
+            view.SetForm(form, delay);
         }
+
+        Sound.PlayDelayed(form == ElementKind.None ? "untransform" : "transform", delay);
     }
 
-    // Уничтожение начинается, когда все элементы ряда доехали до своих клеток.
+    // Уничтожение начинается, когда все элементы ряда доехали до своих клеток,
+    // а если ряд сложился превращением — когда герой закончил превращаться.
     private void OnEntitiesMatched(IReadOnlyList<WorldEntity> matched) {
         float delay = 0f;
         foreach (WorldEntity entity in matched) {
@@ -223,10 +237,20 @@ public class WorldView : MonoBehaviour {
             }
         }
 
+        if (Model.Hero != null && _views.TryGetValue(Model.Hero, out ElementView heroView)) {
+            delay = Mathf.Max(delay, heroView.RemainingFormPopTime);
+        }
+
         foreach (WorldEntity entity in matched) {
             if (_views.Remove(entity, out ElementView view)) {
                 view.Vanish(delay);
             }
+        }
+
+        if (matched.Count > 0) {
+            _vanishFrame = Time.frameCount;
+            _vanishDelay = delay;
+            Sound.PlayDelayed("vanish", delay);
         }
     }
 
@@ -243,6 +267,9 @@ public class WorldView : MonoBehaviour {
         _screen = Model.Hero != null ? Model.ScreenContaining(Model.Hero.Position, Vector2Int.zero) : Vector2Int.zero;
         _camera.transform.position = CameraPosition(_screen);
         FitCamera();
+        if (_screen == Vector2Int.zero) {
+            Hud.RevealRestart();
+        }
     }
 
     // Экран целиком занимает внутренний прямоугольник рамки; вокруг остаются поля под интерфейс.

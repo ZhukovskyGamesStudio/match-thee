@@ -29,9 +29,9 @@ public class PlayerInput : MonoBehaviour {
         }
 
         WorldModel model = _world.Model;
-        if (keyboard.rKey.wasPressedThisFrame) {
+        if (keyboard.rKey.wasPressedThisFrame && _world.Hud != null && _world.Hud.RestartAvailable) {
             _dragCell = null;
-            _world.RestoreRoom();
+            _world.Hud.StartRestart();
             return;
         }
 

@@ -441,6 +441,7 @@ public static class GameSceneBuilder {
 
         camera.orthographic = true;
         camera.orthographicSize = ScreenHeight / 2f;
+        camera.GetUniversalAdditionalCameraData().renderPostProcessing = false; // постобработки нет, в WebGL её шейдеры вырезаны
         camera.clearFlags = CameraClearFlags.SolidColor;
         camera.backgroundColor = new Color32(16, 16, 20, 255);
         camera.transform.position = new Vector3(0f, 0f, -10f);

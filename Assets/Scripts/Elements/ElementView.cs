@@ -7,9 +7,9 @@ public class ElementView : MonoBehaviour {
     private const float ShiftDuration = 0.12f; // на одну клетку
     private const float BumpDuration = 0.22f;
     private const float BumpDistance = 0.3f;
-    private const float VanishDuration = 0.3f;
+    public const float VanishDuration = 0.3f;
     private const float VanishPopScale = 1.3f;
-    private const float FormPopDuration = 0.2f;
+    private const float FormPopDuration = 0.35f;
     private const float FormPopScale = 1.3f;
 
     private SpriteRenderer _renderer;
@@ -19,6 +19,8 @@ public class ElementView : MonoBehaviour {
     private Sprite[] _crownFrames;
     private ElementKind _form = ElementKind.None;
     private float _formPopProgress = 1f;
+    private ElementKind _pendingForm;
+    private float _pendingFormDelay = -1f; // >= 0 — смена формы отложена
     private Vector3 _shiftFrom;
     private Vector3 _shiftTo;
     private float _shiftDuration = ShiftDuration;
@@ -31,6 +33,7 @@ public class ElementView : MonoBehaviour {
     public WorldEntity Entity { get; private set; }
     public bool IsShifting => _shiftProgress < 1f;
     public float RemainingShiftTime => IsShifting ? (1f - _shiftProgress) * _shiftDuration : 0f;
+    public float RemainingFormPopTime => _formPopProgress < 1f ? (1f - _formPopProgress) * FormPopDuration : 0f;
 
     public void Init(WorldEntity entity, ElementsConfig elements, int sortingOrder) {
         Entity = entity;
@@ -52,8 +55,20 @@ public class ElementView : MonoBehaviour {
         transform.position = _shiftTo;
     }
 
+    // Смена формы с задержкой: герой остаётся предметом, пока соседи по ряду исчезают.
+    public void SetForm(ElementKind form, float delay) {
+        if (delay <= 0f) {
+            SetForm(form);
+            return;
+        }
+
+        _pendingForm = form;
+        _pendingFormDelay = delay;
+    }
+
     // Превращение героя: кадры формы (или свои, если None) и корона сверху; коротко раздувается.
     public void SetForm(ElementKind form) {
+        _pendingFormDelay = -1f;
         _form = form;
         _frames = LoadFrames(form == ElementKind.None ? Entity.Kind : form);
         if (_crown != null) {
@@ -107,6 +122,13 @@ public class ElementView : MonoBehaviour {
         _renderer.sprite = _frames[frame];
         if (_crown != null && _crown.enabled) {
             _crown.sprite = _crownFrames[frame];
+        }
+
+        if (_pendingFormDelay >= 0f) {
+            _pendingFormDelay -= Time.deltaTime;
+            if (_pendingFormDelay < 0f) {
+                SetForm(_pendingForm);
+            }
         }
 
         if (_formPopProgress < 1f) {

@@ -9,8 +9,11 @@ using UnityEngine.UI;
 
 // Рамка вокруг игрового экрана (поля под интерфейс) и рюкзак слева сверху. Собирается кодом.
 // При получении ресурса рядом с рюкзаком всплывает его иконка с «+1», а сам рюкзак подпрыгивает.
-// Q (или клик по рюкзаку) открывает панель со списком всех ресурсов внутри.
-// Справа сверху кнопка рестарта (R): назад к моменту входа в комнату.
+// Под рюкзаком всегда виден список предметов (иконка и число); Q или клик по рюкзаку превращает героя
+// в следующий предмет по кругу, пока герой превращён — в списке есть и он сам. Пустой рюкзак на Q трясётся и краснеет.
+// Рюкзак появляется с первым собранным предметом.
+// Справа сверху кнопка рестарта (R): назад к моменту входа в комнату; появляется в левой нижней комнате.
+// Рестарт идёт под пиксельным переходом (шейдер PixelWipe): мир откатывается, пока экран закрыт.
 // Финал: мир плавно затемняется, всплывает пиксельная дрожащая надпись, затем кнопка «сыграть снова».
 public class HudView : MonoBehaviour {
     private const float BorderThickness = 2f;
@@ -44,6 +47,12 @@ public class HudView : MonoBehaviour {
     private const float ReplayGap = 1.2f;         // отступ кнопки от надписи, в высотах надписи
     private static readonly Color ReplayHoverColor = new Color(1f, 1f, 0.75f);
     private static readonly Color ReplayPressedColor = new Color(0.7f, 0.7f, 0.7f);
+    private static readonly Color ShakeColor = new Color(1f, 0.35f, 0.3f);
+    private const float ShakeDuration = 0.45f;
+    private const float ShakeAmplitude = 0.12f; // в размерах рюкзака
+    private const float ShakeCycles = 3f;
+    private const float TransitionDuration = 0.7f;
+    private const string TransitionShader = "Shaders/PixelWipe";
 
     private class Popup {
         public RectTransform Rect;
@@ -66,6 +75,15 @@ public class HudView : MonoBehaviour {
     private RectTransform _borderRight;
     private RectTransform _backpack;
     private RectTransform _restart;
+    private Image _backpackImage;
+    private Vector2 _backpackHome;
+    private bool _backpackRevealed;
+    private bool _restartRevealed;
+    private float _shakeProgress = 1f;
+    private Image _transition;
+    private Material _transitionMaterial;
+    private float _transitionProgress = -1f; // >= 0 — переход идёт
+    private bool _transitionRestored;
     private RectTransform _panel;
     private RectTransform _panelInner;
     private Image _winBackdrop;
@@ -81,13 +99,12 @@ public class HudView : MonoBehaviour {
     private float _backpackSize;
     private float _padding;
     private float _punchProgress = 1f;
-    private bool _panelOpen;
     private float _aspect = 16f / 9f;
     private int _lastWidth;
     private int _lastHeight;
 
-    public bool IsPanelOpen => _panelOpen;
-    public bool WantsCursor => _panelOpen || _replayShown;
+    public bool WantsCursor => _replayShown;
+    public bool RestartAvailable => _restartRevealed;
 
     public void Init(ElementsConfig elements, float aspect, WorldModel model, System.Action restart) {
         _elements = elements;
@@ -112,12 +129,21 @@ public class HudView : MonoBehaviour {
         _borderBottom = CreatePanel(transform, "BorderBottom", BorderColor);
         _borderLeft = CreatePanel(transform, "BorderLeft", BorderColor);
         _borderRight = CreatePanel(transform, "BorderRight", BorderColor);
-        _backpack = CreateIconButton("Backpack", "backpack", TogglePanel);
-        _restart = CreateIconButton("Restart", "restart", () => _restartAction?.Invoke());
+        _backpack = CreateIconButton("Backpack", "backpack", OnBackpackPressed);
+        _backpackImage = _backpack.GetComponent<Image>();
+        _backpack.gameObject.SetActive(false);
+        _restart = CreateIconButton("Restart", "restart", StartRestart);
+        _restart.gameObject.SetActive(false);
         _panel = CreatePanel(transform, "InventoryPanel", BorderColor); // последним — поверх всплывашек
         _panelInner = CreatePanel(_panel, "Inner", PanelColor);
         Stretch(_panelInner, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.one * (-BorderThickness * 2f));
         _panel.gameObject.SetActive(false);
+        _transition = CreateImage(transform, "Transition", null).GetComponent<Image>();
+        _transitionMaterial = new Material(Resources.Load<Shader>(TransitionShader));
+        _transition.material = _transitionMaterial;
+        _transition.raycastTarget = true;
+        Stretch(_transition.rectTransform, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero);
+        _transition.gameObject.SetActive(false);
         Layout();
 
         _inventory.Added += OnResourceAdded;
@@ -147,10 +173,12 @@ public class HudView : MonoBehaviour {
 
         Keyboard keyboard = Keyboard.current;
         if (keyboard != null && keyboard.qKey.wasPressedThisFrame) {
-            TogglePanel();
+            OnBackpackPressed();
         }
 
         UpdatePunch();
+        UpdateShake();
+        UpdateTransition();
         UpdatePopups();
         if (_winTime >= 0f) {
             UpdateWin();
@@ -259,7 +287,8 @@ public class HudView : MonoBehaviour {
         _backpack.anchorMin = new Vector2(0f, 1f);
         _backpack.anchorMax = new Vector2(0f, 1f);
         _backpack.pivot = new Vector2(0.5f, 0.5f);
-        _backpack.anchoredPosition = new Vector2(_padding + _backpackSize / 2f, -(_padding + _backpackSize / 2f));
+        _backpackHome = new Vector2(_padding + _backpackSize / 2f, -(_padding + _backpackSize / 2f));
+        _backpack.anchoredPosition = _backpackHome;
         _backpack.sizeDelta = new Vector2(_backpackSize, _backpackSize);
 
         // Рестарт в правом верхнем углу, того же размера.
@@ -268,10 +297,7 @@ public class HudView : MonoBehaviour {
         _restart.pivot = new Vector2(0.5f, 0.5f);
         _restart.anchoredPosition = new Vector2(-(_padding + _backpackSize / 2f), -(_padding + _backpackSize / 2f));
         _restart.sizeDelta = new Vector2(_backpackSize, _backpackSize);
-
-        if (_panelOpen) {
-            RebuildPanel();
-        }
+        RebuildPanel();
     }
 
     // Кнопка-иконка со спрайтом (рюкзак с буквой Q, рестарт с буквой R).
@@ -288,9 +314,7 @@ public class HudView : MonoBehaviour {
     // Откат комнаты: финал (если был) убираем, панель перестраиваем.
     private void OnRestored() {
         HideWin();
-        if (_panelOpen) {
-            RebuildPanel();
-        }
+        RebuildPanel();
     }
 
     private void HideWin() {
@@ -310,34 +334,106 @@ public class HudView : MonoBehaviour {
     }
 
     private void OnResourceAdded(ElementKind kind, int amount) {
+        RevealBackpack();
         ShowPopup(kind, $"+{amount}");
         _punchProgress = 0f;
     }
 
     // Вид открыт навсегда (ряд из пяти): всплывашка со знаком бесконечности.
     private void OnKindUnlocked(ElementKind kind) {
+        RevealBackpack();
         ShowPopup(kind, UnlockedLabel);
         _punchProgress = 0f;
-        if (_panelOpen) {
-            RebuildPanel();
+        RebuildPanel();
+    }
+
+    // Рюкзак виден с первого собранного предмета и дальше уже не прячется.
+    private void RevealBackpack() {
+        if (_backpackRevealed) {
+            return;
+        }
+
+        _backpackRevealed = true;
+        _backpack.gameObject.SetActive(true);
+        _punchProgress = 0f;
+        RebuildPanel();
+    }
+
+    // Кнопка рестарта появляется, когда игрок впервые попал в левую нижнюю комнату.
+    public void RevealRestart() {
+        if (_restartRevealed) {
+            return;
+        }
+
+        _restartRevealed = true;
+        _restart.gameObject.SetActive(true);
+    }
+
+    private bool IsInventoryEmpty => _inventory.UnlockedKinds.Count == 0 && _inventory.Counts.All(pair => pair.Value <= 0);
+
+    // Q или клик: пустой рюкзак трясётся и краснеет, иначе герой превращается в следующий предмет по кругу.
+    private void OnBackpackPressed() {
+        if (!_backpackRevealed) {
+            return;
+        }
+
+        if (IsInventoryEmpty) {
+            _shakeProgress = 0f;
+            return;
+        }
+
+        _model.TransformNext();
+    }
+
+    private void UpdateShake() {
+        if (_shakeProgress >= 1f) {
+            return;
+        }
+
+        _shakeProgress = Mathf.Min(1f, _shakeProgress + Time.deltaTime / ShakeDuration);
+        float fade = 1f - _shakeProgress;
+        float offset = Mathf.Sin(_shakeProgress * Mathf.PI * 2f * ShakeCycles) * fade * _backpackSize * ShakeAmplitude;
+        _backpack.anchoredPosition = _backpackHome + new Vector2(offset, 0f);
+        _backpackImage.color = Color.Lerp(Color.white, ShakeColor, fade);
+    }
+
+    // Рестарт: запускаем переход; сам откат мира случится на его середине, когда экран закрыт.
+    public void StartRestart() {
+        if (!_restartRevealed || _transitionProgress >= 0f) {
+            return;
+        }
+
+        _transitionProgress = 0f;
+        _transitionRestored = false;
+        _transition.transform.SetAsLastSibling();
+        _transition.gameObject.SetActive(true);
+        _transitionMaterial.SetFloat("_Progress", 0f);
+    }
+
+    private void UpdateTransition() {
+        if (_transitionProgress < 0f) {
+            return;
+        }
+
+        _transitionProgress += Time.deltaTime / TransitionDuration;
+        _transitionMaterial.SetFloat("_Progress", Mathf.Clamp01(_transitionProgress));
+        if (_transitionProgress >= 0.5f && !_transitionRestored) {
+            _transitionRestored = true;
+            _restartAction?.Invoke();
+        }
+
+        if (_transitionProgress >= 1f) {
+            _transitionProgress = -1f;
+            _transition.gameObject.SetActive(false);
         }
     }
 
     private void OnResourceChanged(ElementKind kind, int count) {
-        if (_panelOpen) {
-            RebuildPanel();
-        }
+        RebuildPanel();
     }
 
     private void OnHeroFormChanged(ElementKind form) {
-        if (_panelOpen) {
-            RebuildPanel();
-        }
-    }
-
-    // Превращение: клик по строке рюкзака превращает героя в этот предмет.
-    private void OnItemClicked(ElementKind kind) {
-        _model.TryTransform(kind);
+        RebuildPanel();
     }
 
     // Всплывашка: иконка ресурса и подпись («+1» или «∞») справа от рюкзака; появляется, плывёт вверх и тает.
@@ -387,54 +483,42 @@ public class HudView : MonoBehaviour {
         _backpack.localScale = Vector3.one * (1f + (PunchScale - 1f) * Mathf.Sin(_punchProgress * Mathf.PI));
     }
 
-    private void TogglePanel() {
-        _panelOpen = !_panelOpen;
-        _panel.gameObject.SetActive(_panelOpen);
-        if (_panelOpen) {
-            RebuildPanel();
-        }
-    }
-
-    // Панель под рюкзаком: заголовок и по строке на каждый вид — иконка, имя, «∞» для открытых навсегда
-    // или количество расходуемых. При включённом превращении строки — кнопки, текущая форма героя подсвечена.
+    // Панель под рюкзаком, видна всегда, пока в рюкзаке что-то есть: по строке на предмет — иконка и «∞»
+    // или число. Пока герой превращён, первой строкой он сам. Текущая форма подсвечена цветом короны.
     private void RebuildPanel() {
+        if (_panelInner == null) {
+            return;
+        }
+
         foreach (Transform child in _panelInner) {
             Destroy(child.gameObject);
         }
 
-        float row = _backpackSize * 0.55f;
-        float pad = row * 0.35f;
-        float width = _backpackSize * 4.5f;
-        float y = -pad;
-
-        Text title = CreateText(_panelInner, "Рюкзак", row * 0.6f, TextAnchor.MiddleLeft);
-        PlaceTopLeft(title.rectTransform, new Vector2(pad, y), new Vector2(width - pad * 2f, row));
-        y -= row;
-
-        List<(ElementKind Kind, string Label)> items = _inventory.UnlockedKinds.OrderBy(kind => (int)kind)
-            .Select(kind => (kind, UnlockedLabel))
-            .Concat(_inventory.Counts.Where(pair => pair.Value > 0 && !_inventory.IsUnlocked(pair.Key)).OrderBy(pair => (int)pair.Key)
-                .Select(pair => (pair.Key, $"×{pair.Value}")))
-            .ToList();
-        if (items.Count == 0) {
-            Text empty = CreateText(_panelInner, "пусто", row * 0.5f, TextAnchor.MiddleLeft);
-            empty.color = DimTextColor;
-            PlaceTopLeft(empty.rectTransform, new Vector2(pad, y), new Vector2(width - pad * 2f, row));
-            y -= row;
+        List<(ElementKind Kind, string Label)> items = new();
+        if (_model.IsHeroTransformed) {
+            items.Add((ElementKind.Hero, string.Empty));
         }
 
-        foreach ((ElementKind Kind, string Label) item in items) {
-            RectTransform line = CreateRow(item.Kind, width, row);
-            PlaceTopLeft(line, new Vector2(0f, y), new Vector2(width, row));
-            bool isForm = Features.Transformation && _model.HeroForm == item.Kind;
+        foreach (ElementKind kind in _inventory.Kinds) {
+            items.Add((kind, _inventory.IsUnlocked(kind) ? UnlockedLabel : $"×{_inventory.Count(kind)}"));
+        }
 
-            PlaceTopLeft(CreateImage(line, "Icon", _elements.GetFrame(item.Kind, 0)), new Vector2(pad, 0f), new Vector2(row, row));
-            Text name = CreateText(line, item.Kind.ToString(), row * 0.5f, TextAnchor.MiddleLeft);
-            PlaceTopLeft(name.rectTransform, new Vector2(pad + row + pad, 0f), new Vector2(width - row - pad * 3f, row));
-            Text count = CreateText(line, item.Label, row * 0.5f, TextAnchor.MiddleRight);
-            PlaceTopLeft(count.rectTransform, new Vector2(pad + row + pad, 0f), new Vector2(width - row - pad * 3f, row));
+        bool visible = _backpackRevealed && items.Count > 0;
+        _panel.gameObject.SetActive(visible);
+        if (!visible) {
+            return;
+        }
+
+        float row = _backpackSize * 0.55f;
+        float pad = row * 0.2f;
+        float width = _backpackSize * 1.2f;
+        float y = -pad;
+        foreach ((ElementKind Kind, string Label) item in items) {
+            bool isForm = Features.Transformation && _model.HeroForm == item.Kind;
+            PlaceTopLeft(CreateImage(_panelInner, "Icon", _elements.GetFrame(item.Kind, 0)), new Vector2(pad, y), new Vector2(row, row));
+            Text count = CreateText(_panelInner, item.Label, row * 0.5f, TextAnchor.MiddleLeft);
+            PlaceTopLeft(count.rectTransform, new Vector2(pad + row + pad * 0.5f, y), new Vector2(width - row - pad * 2.5f, row));
             if (isForm) {
-                name.color = FormTextColor;
                 count.color = FormTextColor;
             }
 
@@ -442,27 +526,6 @@ public class HudView : MonoBehaviour {
         }
 
         PlaceTopLeft(_panel, new Vector2(_padding, -(_padding + _backpackSize + _padding)), new Vector2(width, -y + pad));
-    }
-
-    // Строка панели: при включённом превращении — кнопка с подсветкой при наведении.
-    private RectTransform CreateRow(ElementKind kind, float width, float height) {
-        GameObject line = new("Row", typeof(RectTransform), typeof(Image));
-        line.transform.SetParent(_panelInner, false);
-        Image image = line.GetComponent<Image>();
-        image.color = Features.Transformation ? Color.white : Color.clear; // цвет состояния кнопки умножается на этот
-        image.raycastTarget = Features.Transformation;
-        if (Features.Transformation) {
-            Button button = line.AddComponent<Button>();
-            ColorBlock colors = button.colors;
-            colors.normalColor = Color.clear;
-            colors.selectedColor = Color.clear;
-            colors.highlightedColor = RowHoverColor;
-            colors.pressedColor = RowPressedColor;
-            button.colors = colors;
-            button.onClick.AddListener(() => OnItemClicked(kind));
-        }
-
-        return line.GetComponent<RectTransform>();
     }
 
     private static RectTransform CreatePanel(Transform parent, string name, Color color) {
