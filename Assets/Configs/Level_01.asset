@@ -1,0 +1,138 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5ac60ec367e367445b990729c7c12c5c, type: 3}
+  m_Name: Level_01
+  m_EditorClassIdentifier: Assembly-CSharp::LevelConfig
+  <Map>k__BackingField: '################
+
+    #,,....R...,,,.#
+
+    #,@....T....,,.#
+
+    #......K..BB...#
+
+    #..~~~.........#
+
+    #..~~~..G..B...#
+
+    #.......X......#
+
+    #....R.R...S...#
+
+    #:::.......F.M.#
+
+    #:::..D.....C..#
+
+    #,,....H..O..,,#
+
+    ################'
+  <Legend>k__BackingField:
+  - Symbol: '@'
+    Kind: 1
+  - Symbol: '#'
+    Kind: 12
+  - Symbol: ','
+    Kind: 7
+  - Symbol: ~
+    Kind: 8
+  - Symbol: ^
+    Kind: 9
+  - Symbol: '*'
+    Kind: 10
+  - Symbol: ':'
+    Kind: 11
+  - Symbol: R
+    Kind: 13
+  - Symbol: T
+    Kind: 14
+  - Symbol: U
+    Kind: 15
+  - Symbol: F
+    Kind: 16
+  - Symbol: M
+    Kind: 17
+  - Symbol: C
+    Kind: 18
+  - Symbol: O
+    Kind: 19
+  - Symbol: X
+    Kind: 20
+  - Symbol: K
+    Kind: 21
+  - Symbol: D
+    Kind: 22
+  - Symbol: H
+    Kind: 23
+  - Symbol: B
+    Kind: 24
+  - Symbol: L
+    Kind: 25
+  - Symbol: G
+    Kind: 26
+  - Symbol: $
+    Kind: 27
+  - Symbol: S
+    Kind: 28
+  - Symbol: V
+    Kind: 29
+  - Symbol: Q
+    Kind: 30
+  - Symbol: '!'
+    Kind: 31
+  - Symbol: I
+    Kind: 32
+  - Symbol: W
+    Kind: 33
+  - Symbol: P
+    Kind: 34
+  - Symbol: A
+    Kind: 35
+  - Symbol: E
+    Kind: 36
+  - Symbol: N
+    Kind: 37
+  - Symbol: b
+    Kind: 38
+  - Symbol: l
+    Kind: 39
+  - Symbol: g
+    Kind: 40
+  - Symbol: s
+    Kind: 41
+  - Symbol: p
+    Kind: 42
+  - Symbol: '>'
+    Kind: 43
+  - Symbol: o
+    Kind: 44
+  - Symbol: m
+    Kind: 45
+  - Symbol: e
+    Kind: 46
+  - Symbol: z
+    Kind: 2
+  - Symbol: j
+    Kind: 3
+  - Symbol: v
+    Kind: 4
+  - Symbol: f
+    Kind: 5
+  - Symbol: d
+    Kind: 6
+  - Symbol: u
+    Kind: 47
+  - Symbol: n
+    Kind: 48
+  - Symbol: y
+    Kind: 49
+  - Symbol: r
+    Kind: 50
