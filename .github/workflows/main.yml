@@ -1,0 +1,192 @@
+name: Build and Deploy Unity Game to Itch
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: Что собирать и выкладывать
+        type: choice
+        default: webgl
+        options:
+          - webgl
+          - windows
+          - webgl+windows
+  repository_dispatch:
+    types: [unity-build-trigger]
+
+# Страница игры на itch: https://<ITCH_USER>.itch.io/<ITCH_GAME>.
+# Обе части — переменные репозитория (Settings -> Variables -> Actions).
+env:
+  ITCH_USER: ${{ vars.ITCH_IO_USERNAME }}
+  ITCH_GAME: ${{ vars.ITCH_IO_GAME_NAME }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: itch-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Разворачивает выбор из кнопки в матрицу. repository_dispatch кнопки не имеет —
+  # для него собираем WebGL.
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        env:
+          PLATFORMS: ${{ github.event_name == 'workflow_dispatch' && inputs.platforms || 'webgl' }}
+        run: |
+          set -euo pipefail
+          entries=()
+          case "$PLATFORMS" in *webgl*)
+            entries+=('{"name":"webgl","target":"WebGL","channel":"html5"}');; esac
+          case "$PLATFORMS" in *windows*)
+            entries+=('{"name":"windows","target":"StandaloneWindows64","channel":"windows"}');; esac
+          printf 'matrix={"include":[%s]}\n' "$(IFS=,; echo "${entries[*]}")" | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    needs: [setup]
+    # На ubuntu, а не windows: раннер windows-latest больше не поднимает Docker-демон,
+    # а game-ci собирает через Docker. Linux-образы редактора умеют и WebGL, и
+    # StandaloneWindows64 (Mono), так что одного раннера хватает на оба таргета.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Образ редактора Unity весит десятки гигабайт, на чистом раннере места впритык.
+      - name: Освободить место на раннере
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-${{ matrix.target }}-${{ hashFiles('Packages/packages-lock.json') }}
+          restore-keys: |
+            Library-${{ matrix.target }}-
+            Library-
+
+      - name: Set up Unity
+        uses: game-ci/unity-builder@v4
+        with:
+          targetPlatform: ${{ matrix.target }}
+          # auto = взять версию из ProjectSettings/ProjectVersion.txt (сейчас 6000.6.0f1).
+          # Переменная UNITY_VERSION нужна, только если образа этой версии у game-ci
+          # ещё нет и надо временно откатиться на соседнюю.
+          unityVersion: ${{ vars.UNITY_VERSION || 'auto' }}
+          buildName: MatchThee
+          # None: у репозитория нет тегов, а дефолтный Semantic лезет за ними в git.
+          versioning: None
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+      # game-ci кладёт билд в build/<target>/<buildName>, но itch ждёт корень канала:
+      # для html5 — index.html в корне, для windows — .exe рядом с Data. Ищем нужную
+      # папку по содержимому, чтобы не зависеть от того, как game-ci её назвал.
+      - name: Разложить билд в плоскую папку
+        run: |
+          set -euo pipefail
+          sudo chown -R "$(id -u):$(id -g)" build
+          if [ "${{ matrix.name }}" = "webgl" ]; then
+            found=$(find build -name index.html -print -quit)
+          else
+            found=$(find build -name '*.exe' -print -quit)
+          fi
+          # Без этой проверки пустой $found превратился бы в dirname "" = "." —
+          # и на itch уехал бы весь воркспейс с исходниками.
+          [ -n "$found" ] || { echo "::error::В build/ не нашлось собранного билда"; find build -maxdepth 3; exit 1; }
+          src=$(dirname "$found")
+          echo "Билд лежит в: $src"
+          mkdir -p upload
+          cp -r "$src/." upload/
+          # Папка с отладочными символами: несколько сотен мегабайт, на itch не нужна.
+          rm -rf upload/*BackUpThisFolder*
+          ls -la upload
+          du -sh upload
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}-build
+          path: upload
+          retention-days: 14
+
+  deploy-itch:
+    needs: [setup, build]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    steps:
+      - name: Проверить настройки itch
+        env:
+          BUTLER_API_KEY: ${{ secrets.ITCH_IO_API_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "${ITCH_USER:-}" ] || { echo "::error::Не задана переменная репозитория ITCH_IO_USERNAME"; exit 1; }
+          [ -n "${ITCH_GAME:-}" ] || { echo "::error::Не задана переменная репозитория ITCH_IO_GAME_NAME"; exit 1; }
+          [ -n "${BUTLER_API_KEY:-}" ] || { echo "::error::Не задан секрет ITCH_IO_API_KEY"; exit 1; }
+          echo "Цель: $ITCH_USER/$ITCH_GAME:${{ matrix.channel }}"
+
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.name }}-build
+          path: upload
+
+      - name: Install itch.io butler
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Запасная версия на случай, если API недоступен или ответ пустой.
+          BUTLER_FALLBACK: v15.29.0
+        run: |
+          set -euo pipefail
+
+          # Намеренно НЕ используем /releases/latest/download/: релиз butler может
+          # выйти вообще без бинарников (так случилось с v15.30.0 от 27.07.2026),
+          # и тогда эта ссылка отдаёт 404 с девятибайтовым телом "Not Found",
+          # curl молча кладёт его в butler.zip, а падает уже unzip — с сообщением,
+          # по которому причину не угадать. Ищем свежайший релиз, у которого
+          # нужный ассет реально есть.
+          # "|| url=" обязателен: под set -e и pipefail упавший curl или jq
+          # уронил бы весь шаг прямо здесь, и до запасного варианта дело бы не дошло.
+          url=$(curl -sSL -H "Authorization: Bearer ${GH_TOKEN:-}" \
+                  "https://api.github.com/repos/itchio/butler/releases?per_page=20" \
+                | jq -r '[.[] | select(.draft == false and .prerelease == false)
+                             | .assets[]?
+                             | select(.name == "butler-linux-amd64.zip")
+                             | .browser_download_url][0] // empty') || url=""
+
+          if [ -z "$url" ]; then
+            echo "Релиз с butler-linux-amd64.zip через API не нашёлся, беру запасной $BUTLER_FALLBACK"
+            url="https://github.com/itchio/butler/releases/download/$BUTLER_FALLBACK/butler-linux-amd64.zip"
+          fi
+
+          echo "Качаю butler: $url"
+          # --fail: любой не-200 роняет шаг здесь, а не через unzip.
+          curl -sSL --fail -o butler.zip "$url"
+          unzip -q butler.zip
+          chmod +x linux-amd64/butler
+          sudo mv linux-amd64/butler /usr/local/bin/
+          butler -V || true
+
+      - name: Deploy to itch.io
+        env:
+          BUTLER_API_KEY: ${{ secrets.ITCH_IO_API_KEY }}
+        run: |
+          set -euo pipefail
+          butler push upload "$ITCH_USER/$ITCH_GAME:${{ matrix.channel }}" \
+            --userversion "${{ github.run_number }}"
+          echo "### Выложено: [$ITCH_USER/$ITCH_GAME:${{ matrix.channel }}](https://$ITCH_USER.itch.io/$ITCH_GAME)" >> "$GITHUB_STEP_SUMMARY"
