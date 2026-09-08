@@ -29,6 +29,15 @@ public class PlayerInput : MonoBehaviour {
         }
 
         WorldModel model = _world.Model;
+        if (keyboard.escapeKey.wasPressedThisFrame && _world.Pause != null) {
+            _world.Pause.Toggle();
+        }
+
+        if (_world.Pause != null && _world.Pause.IsPaused) {
+            _world.Hud.Pointer.Visible = true;
+            return;
+        }
+
         if (keyboard.rKey.wasPressedThisFrame && _world.Hud != null && _world.Hud.RestartAvailable) {
             _dragCell = null;
             _world.Hud.StartRestart();

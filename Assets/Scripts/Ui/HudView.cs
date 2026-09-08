@@ -175,7 +175,7 @@ public class HudView : MonoBehaviour {
         }
 
         Keyboard keyboard = Keyboard.current;
-        if (keyboard != null && keyboard.qKey.wasPressedThisFrame) {
+        if (keyboard != null && keyboard.qKey.wasPressedThisFrame && Time.timeScale > 0f) {
             OnBackpackPressed();
         }
 

@@ -26,15 +26,15 @@ public class WorldView : MonoBehaviour {
     private float _scrollProgress = 1f;
     private int _lastWidth;
     private int _lastHeight;
-    private bool _snapshotPending; // снимок берём кадром позже входа, когда ход целиком разрешился
+    private bool _entryPending; // первый вход в комнату записываем кадром позже, когда ход целиком разрешился
     private int _vanishFrame = -1;  // кадр и задержка последнего исчезновения: возврат героя ждёт его конца
     private float _vanishDelay;
-    private Vector2Int _snapshotScreen;
 
     public WorldModel Model { get; private set; }
     public CursorView Cursor { get; private set; }
     public HudView Hud { get; private set; }
     public SoundView Sound { get; private set; }
+    public PauseView Pause { get; private set; }
     public Vector2Int Screen => _screen;
     public bool IsScrolling => _scrollProgress < 1f;
 
@@ -66,7 +66,7 @@ public class WorldView : MonoBehaviour {
         CreateHud();
         SetupCamera();
         UnityEngine.Cursor.visible = false;
-        _snapshotPending = true;
+        _entryPending = true;
     }
 
     private void OnDestroy() {
@@ -85,10 +85,9 @@ public class WorldView : MonoBehaviour {
             FitCamera();
         }
 
-        if (_snapshotPending) {
-            _snapshotPending = false;
-            Model.SaveSnapshot();
-            _snapshotScreen = _screen;
+        if (_entryPending) {
+            _entryPending = false;
+            Model.RecordRoomEntry();
         }
 
         if (!IsScrolling) {
@@ -155,6 +154,7 @@ public class WorldView : MonoBehaviour {
         GameObject hudObject = new("Hud", typeof(RectTransform));
         Hud = hudObject.AddComponent<HudView>();
         Hud.Init(_elements, (float)Model.ScreenWidth / Model.ScreenHeight, Model, RestoreRoom);
+        Pause = PauseView.Create();
     }
 
     private void OnEntityMoved(WorldEntity entity) {
@@ -179,18 +179,18 @@ public class WorldView : MonoBehaviour {
         _scrollFrom = _camera.transform.position;
         _scrollTo = CameraPosition(screen);
         _scrollProgress = 0f;
-        _snapshotPending = true; // вход в комнату: сохраняемся
+        _entryPending = true; // вход в комнату: если первый — запоминаем клетку входа
         if (screen == Vector2Int.zero) {
             Hud.RevealRestart(); // левая нижняя комната открывает рестарт
         }
     }
 
-    // R: назад к моменту входа в комнату.
+    // R: комната в первозданный вид, герой на клетку первого входа.
     public void RestoreRoom() {
-        Model.Restore();
+        Model.RestartRoom();
     }
 
-    // Модель откатилась: вью предметов пересобираем с нуля, камера сразу на экран входа.
+    // Комната перезапущена: вью предметов пересобираем с нуля.
     private void OnRestored() {
         foreach (KeyValuePair<WorldEntity, ElementView> pair in _views.ToList()) {
             if (!ElementRules.IsFloor(pair.Key.Kind)) {
@@ -208,10 +208,6 @@ public class WorldView : MonoBehaviour {
         }
 
         Cursor.Hide();
-        _screen = _snapshotScreen;
-        Model.SetScreen(_screen);
-        _scrollProgress = 1f;
-        _camera.transform.position = CameraPosition(_screen);
     }
 
     private void OnGameWon() {

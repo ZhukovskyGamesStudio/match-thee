@@ -6,9 +6,24 @@ using UnityEngine;
 // Один и тот же звук в одном кадре играет один раз (обмен с трона двигает два элемента сразу).
 public class SoundView : MonoBehaviour {
     private const string Folder = "Audio/";
-    private const float SoundVolume = 0.6f;
-    private const float MusicVolume = 0.3f;
+    private const float DefaultSoundVolume = 0.6f;
+    private const float DefaultMusicVolume = 0.3f;
+    private const string SoundVolumeKey = "volume.sounds";
+    private const string MusicVolumeKey = "volume.music";
     private const float MusicFadeDuration = 1.5f;
+
+    // Громкость из паузы, 0..1, помнится между запусками.
+    public static float SoundVolume {
+        get => PlayerPrefs.GetFloat(SoundVolumeKey, DefaultSoundVolume);
+        set => PlayerPrefs.SetFloat(SoundVolumeKey, Mathf.Clamp01(value));
+    }
+
+    public static float MusicVolume {
+        get => PlayerPrefs.GetFloat(MusicVolumeKey, DefaultMusicVolume);
+        set => PlayerPrefs.SetFloat(MusicVolumeKey, Mathf.Clamp01(value));
+    }
+
+    private float _throneMix; // 0 — обычная мелодия, 1 — королевская
     private const int DspBufferSize = 256; // «лучшая задержка»
     private static readonly string[] AllClips = {
         "step", "push", "bump", "vanish", "pickup", "unlock", "transform", "untransform", "win", "restart", "music", "music_throne",
@@ -34,8 +49,8 @@ public class SoundView : MonoBehaviour {
             }
         }
 
-        _music = CreateMusic("music", MusicVolume);
-        _throneMusic = CreateMusic("music_throne", 0f);
+        _music = CreateMusic("music");
+        _throneMusic = CreateMusic("music_throne");
 
         model.EntityMoved += OnEntityMoved;
         model.GameWon += OnGameWon;
@@ -73,16 +88,17 @@ public class SoundView : MonoBehaviour {
         }
 
         bool throne = _model.IsHeroOnThrone;
-        float step = Time.deltaTime / MusicFadeDuration * MusicVolume;
-        _music.volume = Mathf.MoveTowards(_music.volume, throne ? 0f : MusicVolume, step);
-        _throneMusic.volume = Mathf.MoveTowards(_throneMusic.volume, throne ? MusicVolume : 0f, step);
+        _throneMix = Mathf.MoveTowards(_throneMix, throne ? 1f : 0f, Time.unscaledDeltaTime / MusicFadeDuration);
+        float music = MusicVolume;
+        _music.volume = (1f - _throneMix) * music;
+        _throneMusic.volume = _throneMix * music;
     }
 
-    private AudioSource CreateMusic(string name, float volume) {
+    private AudioSource CreateMusic(string name) {
         AudioSource source = gameObject.AddComponent<AudioSource>();
         source.playOnAwake = false;
         source.loop = true;
-        source.volume = volume;
+        source.volume = 0f;
         source.clip = Load(name);
         if (source.clip != null) {
             source.Play();

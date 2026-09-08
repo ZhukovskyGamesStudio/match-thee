@@ -44,16 +44,18 @@ public class WorldModel {
     public event Action<IReadOnlyList<WorldEntity>> EntitiesMatched;
     public event Action<ElementKind> HeroFormChanged;
     public event Action GameWon; // герой соединился с персонажами и исчез
-    public event Action Restored; // мир откатился к снимку комнаты: вью пересобираются заново
+    public event Action Restored; // комната перезапущена: вью предметов пересобираются заново
 
-    // Снимок комнаты: слой предметов, форма героя и рюкзак на момент входа. R возвращает к нему.
-    private class Snapshot {
-        public ElementKind[,] Objects;
+    // Первый вход в комнату: где герой в неё вошёл, в какой форме и что местного лежало в рюкзаке.
+    // Рестарт возвращает комнату в вид из карты и героя на эту клетку.
+    private class RoomEntry {
+        public Vector2Int HeroCell;
         public ElementKind HeroForm;
-        public Inventory.State Backpack;
+        public Dictionary<ElementKind, int> Local;
     }
 
-    private Snapshot _snapshot;
+    private readonly Dictionary<Vector2Int, RoomEntry> _roomEntries = new();
+    private readonly ElementKind[,] _initialObjects; // слой предметов из карты, для рестарта комнаты
 
     private readonly Dictionary<Vector2Int, WorldEntity> _floors = new();
     private readonly Dictionary<Vector2Int, WorldEntity> _objects = new();
@@ -65,12 +67,17 @@ public class WorldModel {
         ScreenWidth = Math.Max(2, screenWidth);
         ScreenHeight = Math.Max(2, screenHeight);
         _cells = new ElementKind[Width, Height];
+        _initialObjects = new ElementKind[Width, Height];
 
         for (int y = 0; y < Height; y++) {
             for (int x = 0; x < Width; x++) {
                 ElementKind kind = cells[x, y];
                 if (kind == ElementKind.None) {
                     continue;
+                }
+
+                if (!ElementRules.IsFloor(kind)) {
+                    _initialObjects[x, y] = kind;
                 }
 
                 WorldEntity entity = new(kind, new Vector2Int(x, y));
@@ -245,8 +252,8 @@ public class WorldModel {
         return IsHeroTransformed ? HeroForm : ElementKind.Person;
     }
 
-    // Экран, где стоит герой: от него зависят доступные местные ресурсы. Если форма героя осталась
-    // на прошлом экране (местный ресурс не переносится) — герой становится собой.
+    // Экран, где стоит герой: от него зависят доступные местные ресурсы. Если предмета формы героя
+    // на новом экране нет (местный ресурс не переносится) — герой становится собой; если есть — остаётся.
     public void SetScreen(Vector2Int screen) {
         CurrentScreen = screen;
         Inventory.Screen = screen;
@@ -256,51 +263,70 @@ public class WorldModel {
         }
     }
 
-    public void SaveSnapshot() {
-        ElementKind[,] objects = new ElementKind[Width, Height];
-        foreach (WorldEntity entity in _objects.Values) {
-            objects[entity.Position.x, entity.Position.y] = entity.Kind;
+    // Запомнить первый вход в текущую комнату (повторные входы ничего не меняют).
+    public void RecordRoomEntry() {
+        if (Hero == null || _roomEntries.ContainsKey(CurrentScreen)) {
+            return;
         }
 
-        _snapshot = new Snapshot {
-            Objects = objects,
+        _roomEntries[CurrentScreen] = new RoomEntry {
+            HeroCell = Hero.Position,
             HeroForm = HeroForm,
-            Backpack = Inventory.Save(),
+            Local = Inventory.SaveLocal(CurrentScreen),
         };
     }
 
-    // Откат к снимку: предметы пересоздаются заново (старые сущности больше не действительны).
-    public bool Restore() {
-        if (_snapshot == null) {
+    // Рестарт комнаты: предметы в её прямоугольнике — как на карте, герой на клетке первого входа,
+    // общие ресурсы, добытые здесь, отняты, потраченные здесь — возвращены, местные — как при первом входе.
+    // Предметы пересоздаются заново (старые сущности комнаты больше не действительны).
+    public bool RestartRoom() {
+        if (!_roomEntries.TryGetValue(CurrentScreen, out RoomEntry entry)) {
             return false;
         }
 
-        _objects.Clear();
-        Array.Clear(_cells, 0, _cells.Length);
-        Hero = null;
-        HeroForm = ElementKind.None;
-        for (int y = 0; y < Height; y++) {
-            for (int x = 0; x < Width; x++) {
-                ElementKind kind = _snapshot.Objects[x, y];
-                if (kind == ElementKind.None) {
-                    continue;
-                }
+        // Героя снимаем с сетки первым: иначе Remove(Hero) стёр бы восстановленный предмет на его клетке.
+        if (Hero != null) {
+            Remove(Hero);
+        } else {
+            Hero = new WorldEntity(ElementKind.Hero, entry.HeroCell);
+        }
 
-                WorldEntity entity = new(kind, new Vector2Int(x, y));
-                if (kind == ElementKind.Hero) {
-                    Hero = entity;
-                }
-
-                Place(entity, entity.Position);
+        foreach (WorldEntity entity in _objects.Values.ToList()) {
+            if (IsInScreen(CurrentScreen, entity.Position)) {
+                Remove(entity);
             }
         }
 
-        HeroForm = _snapshot.HeroForm;
-        if (Hero != null) {
+        Vector2Int origin = ScreenOrigin(CurrentScreen);
+        for (int y = origin.y; y < origin.y + ScreenHeight; y++) {
+            for (int x = origin.x; x < origin.x + ScreenWidth; x++) {
+                if (!IsInside(new Vector2Int(x, y))) {
+                    continue;
+                }
+
+                ElementKind kind = _initialObjects[x, y];
+                Vector2Int cell = new(x, y);
+                if (kind == ElementKind.None || kind == ElementKind.Hero || cell == entry.HeroCell) {
+                    continue;
+                }
+
+                Place(new WorldEntity(kind, cell), cell);
+            }
+        }
+
+        WorldEntity occupant = ObjectAt(entry.HeroCell);
+        if (occupant != null) {
+            Remove(occupant);
+        }
+
+        Inventory.RestartRoom(CurrentScreen, entry.Local);
+        HeroForm = ElementKind.None;
+        Place(Hero, entry.HeroCell);
+        if (entry.HeroForm != ElementKind.None && Inventory.Count(entry.HeroForm) > 0) {
+            HeroForm = entry.HeroForm;
             _cells[Hero.Position.x, Hero.Position.y] = CellKind(Hero);
         }
 
-        Inventory.Restore(_snapshot.Backpack);
         Restored?.Invoke();
         return true;
     }

@@ -13,7 +13,8 @@ public class Inventory {
 
     private readonly Dictionary<ElementKind, int> _global = new();
     private readonly Dictionary<Vector2Int, Dictionary<ElementKind, int>> _local = new();
-    private readonly Dictionary<Vector2Int, Dictionary<ElementKind, int>> _spent = new(); // сколько общих потрачено на экране
+    private readonly Dictionary<Vector2Int, Dictionary<ElementKind, int>> _spent = new();  // сколько общих потрачено на экране
+    private readonly Dictionary<Vector2Int, Dictionary<ElementKind, int>> _gained = new(); // сколько общих добыто на экране
     private Vector2Int _screen;
 
     // Экран, на котором стоит герой: определяет, какие местные ресурсы сейчас доступны.
@@ -64,6 +65,7 @@ public class Inventory {
     public void Add(ElementKind kind, int amount, bool everywhere) {
         if (everywhere) {
             _global[kind] = TotalGlobal(kind) + amount;
+            CountsIn(_gained, _screen)[kind] = CountIn(_gained, kind) + amount;
         } else {
             CountsIn(_local, _screen)[kind] = LocalCount(kind) + amount;
         }
@@ -92,24 +94,24 @@ public class Inventory {
         return true;
     }
 
-    // Снимок для отката комнаты: копия общих, всех местных и трат общих по экранам.
-    public State Save() {
-        return new State {
-            Global = new Dictionary<ElementKind, int>(_global),
-            Local = Copy(_local),
-            Spent = Copy(_spent),
-        };
+    // Местные ресурсы экрана на момент первого входа — для рестарта комнаты.
+    public Dictionary<ElementKind, int> SaveLocal(Vector2Int screen) {
+        return _local.TryGetValue(screen, out Dictionary<ElementKind, int> counts) ? new Dictionary<ElementKind, int>(counts) : new Dictionary<ElementKind, int>();
     }
 
-    // Откат без событий: интерфейс перестраивается по WorldModel.Restored.
-    public void Restore(State state) {
-        _global.Clear();
-        foreach (KeyValuePair<ElementKind, int> pair in state.Global) {
-            _global[pair.Key] = pair.Value;
+    // Рестарт комнаты: общие ресурсы, добытые здесь, отнимаются; траты общих здесь возвращаются;
+    // местные — как при первом входе. Без событий: интерфейс перестраивается по WorldModel.Restored.
+    public void RestartRoom(Vector2Int screen, Dictionary<ElementKind, int> localAtEntry) {
+        if (_gained.TryGetValue(screen, out Dictionary<ElementKind, int> gained)) {
+            foreach (KeyValuePair<ElementKind, int> pair in gained) {
+                _global[pair.Key] = Math.Max(0, TotalGlobal(pair.Key) - pair.Value);
+            }
+
+            gained.Clear();
         }
 
-        Fill(_local, state.Local);
-        Fill(_spent, state.Spent);
+        _spent.Remove(screen);
+        _local[screen] = new Dictionary<ElementKind, int>(localAtEntry);
     }
 
     private static Dictionary<ElementKind, int> CountsIn(Dictionary<Vector2Int, Dictionary<ElementKind, int>> table, Vector2Int screen) {
@@ -121,20 +123,4 @@ public class Inventory {
         return counts;
     }
 
-    private static Dictionary<Vector2Int, Dictionary<ElementKind, int>> Copy(Dictionary<Vector2Int, Dictionary<ElementKind, int>> table) {
-        return table.ToDictionary(pair => pair.Key, pair => new Dictionary<ElementKind, int>(pair.Value));
-    }
-
-    private static void Fill(Dictionary<Vector2Int, Dictionary<ElementKind, int>> table, Dictionary<Vector2Int, Dictionary<ElementKind, int>> source) {
-        table.Clear();
-        foreach (KeyValuePair<Vector2Int, Dictionary<ElementKind, int>> pair in source) {
-            table[pair.Key] = new Dictionary<ElementKind, int>(pair.Value);
-        }
-    }
-
-    public class State {
-        public Dictionary<ElementKind, int> Global;
-        public Dictionary<Vector2Int, Dictionary<ElementKind, int>> Local;
-        public Dictionary<Vector2Int, Dictionary<ElementKind, int>> Spent;
-    }
 }

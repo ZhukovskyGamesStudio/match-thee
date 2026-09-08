@@ -12,7 +12,9 @@ public class PixelCursor : MonoBehaviour {
     private Image _image;
     private Sprite[] _frames;
     private RectTransform _rect;
+    private Canvas _canvas; // масштаб канваса: позиция мыши в экранных пикселях делится на него
     private bool _visible;
+    private float _size;
 
     public bool Visible {
         get => _visible;
@@ -44,15 +46,20 @@ public class PixelCursor : MonoBehaviour {
 
         // Острие стрелки — левый верхний пиксель спрайта: он и стоит в точке мыши.
         _rect = GetComponent<RectTransform>();
+        _canvas = GetComponentInParent<Canvas>();
         _rect.anchorMin = Vector2.zero;
         _rect.anchorMax = Vector2.zero;
         _rect.pivot = new Vector2(0f, 1f);
-        _rect.sizeDelta = new Vector2(size, size);
+        SetSize(size);
     }
 
+    // Размер в экранных пикселях.
     public void SetSize(float size) {
-        _rect.sizeDelta = new Vector2(size, size);
+        _size = size;
+        _rect.sizeDelta = Vector2.one * (size / Scale);
     }
+
+    private float Scale => _canvas != null && _canvas.scaleFactor > 0f ? _canvas.scaleFactor : 1f;
 
     private void LateUpdate() {
         Cursor.visible = false;
@@ -64,7 +71,8 @@ public class PixelCursor : MonoBehaviour {
 
         _image.enabled = true;
         _image.sprite = _frames[(int)(Time.time * WobbleFps) % _frames.Length];
-        _rect.anchoredPosition = mouse.position.ReadValue();
+        _rect.sizeDelta = Vector2.one * (_size / Scale);
+        _rect.anchoredPosition = mouse.position.ReadValue() / Scale;
         transform.SetAsLastSibling();
     }
 }

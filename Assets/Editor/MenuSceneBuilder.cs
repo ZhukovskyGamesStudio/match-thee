@@ -4,16 +4,22 @@ using UnityEngine;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.SceneManagement;
 
-// Собирает сцену меню Scenes/MenuScene (камера с тёмным фоном и MenuView) и ставит её первой в сборку.
-// Меню Match Thee/Build Menu Scene.
+// Собирает сцену меню Scenes/MenuScene: камера с тёмным фоном и экземпляр префаба Resources/Ui/MainMenu.
+// Ставит её первой в сборку. Меню Match Thee/Build Menu Scene (префабы — Match Thee/Build UI Prefabs).
 public static class MenuSceneBuilder {
     private const string ScenePath = "Assets/Scenes/MenuScene.unity";
     private const string GameScenePath = "Assets/Scenes/GameScene.unity";
-    private const string ElementsConfigPath = "Assets/Configs/ElementsConfig.asset";
+    private const string MenuPrefabPath = "Assets/Resources/Ui/MainMenu.prefab";
 
     [MenuItem("Match Thee/Build Menu Scene")]
     public static void Build() {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) {
+            return;
+        }
+
+        GameObject menuPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(MenuPrefabPath);
+        if (menuPrefab == null) {
+            Debug.LogWarning($"Match Thee: нет префаба {MenuPrefabPath} — сначала Match Thee/Build UI Prefabs");
             return;
         }
 
@@ -26,10 +32,7 @@ public static class MenuSceneBuilder {
         camera.backgroundColor = new Color32(16, 16, 20, 255);
         camera.GetUniversalAdditionalCameraData().renderPostProcessing = false;
 
-        GameObject menuObject = new("Menu", typeof(RectTransform), typeof(MenuView));
-        SerializedObject menu = new(menuObject.GetComponent<MenuView>());
-        menu.FindProperty("_elements").objectReferenceValue = AssetDatabase.LoadAssetAtPath<ElementsConfig>(ElementsConfigPath);
-        menu.ApplyModifiedPropertiesWithoutUndo();
+        PrefabUtility.InstantiatePrefab(menuPrefab, scene);
 
         EditorSceneManager.SaveScene(scene, ScenePath);
         EditorBuildSettings.scenes = new[] {

@@ -268,6 +268,15 @@ public static class GameSceneBuilder {
             if (AssetImporter.GetAtPath(AtlasPathV2) is SpriteAtlasImporter importer) {
                 importer.packingSettings = packing;
                 importer.textureSettings = texture;
+                // Пиксель-арт без сжатия: блочное сжатие размазывает мелкие детали (корона, обводки) и мерцает по кадрам.
+                foreach (string platform in new[] { "DefaultTexturePlatform", "Standalone", "WebGL" }) {
+                    TextureImporterPlatformSettings settings = importer.GetPlatformSettings(platform);
+                    settings.overridden = true;
+                    settings.textureCompression = TextureImporterCompression.Uncompressed;
+                    settings.format = TextureImporterFormat.RGBA32;
+                    importer.SetPlatformSettings(settings);
+                }
+
                 importer.SaveAndReimport();
             }
 
