@@ -9,6 +9,9 @@ public class ElementView : MonoBehaviour {
     private const float BumpDistance = 0.3f;
     public const float VanishDuration = 0.3f;
     private const float VanishPopScale = 1.3f;
+    private const int RowStep = 10;     // шаг порядка между строками: ближняя строка рисуется поверх дальней
+    private const int VanishLift = 5000; // исчезающий элемент всплывает над соседями
+    private const float Pixel = 1f / 24f;
     private const float FormPopDuration = 0.35f;
     private const float FormPopScale = 1.3f;
 
@@ -17,6 +20,8 @@ public class ElementView : MonoBehaviour {
     private ElementsConfig _elements;
     private Sprite[] _frames;
     private Sprite[] _crownFrames;
+    private string _spriteName; // обычно имя вида, у рельефа — вариант тайла по соседям
+    private int _order; // порядок слоя без поправки на строку
     private ElementKind _form = ElementKind.None;
     private float _formPopProgress = 1f;
     private ElementKind _pendingForm;
@@ -35,24 +40,30 @@ public class ElementView : MonoBehaviour {
     public float RemainingShiftTime => IsShifting ? (1f - _shiftProgress) * _shiftDuration : 0f;
     public float RemainingFormPopTime => _formPopProgress < 1f ? (1f - _formPopProgress) * FormPopDuration : 0f;
 
-    public void Init(WorldEntity entity, ElementsConfig elements, int sortingOrder) {
+    public void Init(WorldEntity entity, ElementsConfig elements, int sortingOrder, string spriteName = null) {
         Entity = entity;
         _elements = elements;
         _renderer = GetComponent<SpriteRenderer>();
-        _renderer.sortingOrder = sortingOrder;
-        _frames = LoadFrames(entity.Kind);
+        _order = sortingOrder;
+        _spriteName = string.IsNullOrEmpty(spriteName) ? Name(entity.Kind) : spriteName;
+        _frames = LoadFrames(_spriteName);
+        if (_frames[0] == null) {
+            _spriteName = Name(entity.Kind); // варианта нет — показываем обычный вид
+            _frames = LoadFrames(_spriteName);
+        }
 
         if (entity.Kind == ElementKind.Hero) {
             GameObject crownObject = new("Crown", typeof(SpriteRenderer));
             crownObject.transform.SetParent(transform, false);
             _crown = crownObject.GetComponent<SpriteRenderer>();
-            _crown.sortingOrder = sortingOrder + 1;
             _crown.enabled = false;
             _crownFrames = LoadFrames("crown");
         }
 
-        _shiftFrom = _shiftTo = ToWorld(entity.Position);
+        ApplyOrder(entity.Position);
+        _shiftFrom = _shiftTo = Place(entity.Position);
         transform.position = _shiftTo;
+        _renderer.sprite = _frames[0]; // кадр сразу: спрятанное вью не тикает, а показаться должно уже готовым
     }
 
     // Смена формы с задержкой: герой остаётся предметом, пока соседи по ряду исчезают.
@@ -70,7 +81,7 @@ public class ElementView : MonoBehaviour {
     public void SetForm(ElementKind form) {
         _pendingFormDelay = -1f;
         _form = form;
-        _frames = LoadFrames(form == ElementKind.None ? Entity.Kind : form);
+        _frames = LoadFrames(form == ElementKind.None ? _spriteName : Name(form));
         if (_crown != null) {
             _crown.enabled = form != ElementKind.None;
         }
@@ -78,8 +89,8 @@ public class ElementView : MonoBehaviour {
         _formPopProgress = 0f;
     }
 
-    private Sprite[] LoadFrames(ElementKind kind) {
-        return LoadFrames(kind.ToString().ToLowerInvariant());
+    private static string Name(ElementKind kind) {
+        return kind.ToString().ToLowerInvariant();
     }
 
     private Sprite[] LoadFrames(string name) {
@@ -92,8 +103,9 @@ public class ElementView : MonoBehaviour {
     }
 
     // Смещение: плавный проезд до новой клетки (толчок героем или обмен с трона).
-    public void MoveTo(Vector2Int cell) {
-        Vector3 next = ToWorld(cell);
+    public void MoveTo(Vector3Int cell) {
+        Vector3 next = Place(cell);
+        ApplyOrder(cell);
         if (_form == ElementKind.None && ElementRules.IsCreature(Entity.Kind) && !Mathf.Approximately(next.x, _shiftTo.x)) {
             _renderer.flipX = next.x < _shiftTo.x;
         }
@@ -102,6 +114,14 @@ public class ElementView : MonoBehaviour {
         _shiftTo = next;
         _shiftDuration = ShiftDuration * Mathf.Max(1f, Vector3.Distance(_shiftFrom, _shiftTo));
         _shiftProgress = 0f;
+    }
+
+    // Клетка ушла с видимого уровня: вью прячут, а спрятанное не тикает — доезжаем сразу.
+    public void Snap() {
+        _shiftFrom = _shiftTo;
+        _shiftProgress = 1f;
+        _bumpProgress = 1f;
+        transform.position = _shiftTo;
     }
 
     // Неудачное смещение: элемент дёргается к цели и возвращается.
@@ -113,7 +133,30 @@ public class ElementView : MonoBehaviour {
     // Уничтожение: после задержки (когда весь ряд доехал) подпрыгивает, сжимается в точку и тает.
     public void Vanish(float delay) {
         _vanishDelay = Mathf.Max(0f, delay);
-        _renderer.sortingOrder += 5;
+        _renderer.sortingOrder += VanishLift;
+    }
+
+    // Предметы крупнее клетки залезают на соседние, поэтому порядок между ними задаём строкой:
+    // кто ниже — тот ближе к камере. Внутри строки чередуем по столбцу, чтобы у соседей
+    // порядок не совпадал: при равном порядке Unity рисует их как придётся.
+    private void ApplyOrder(Vector3Int cell) {
+        _renderer.sortingOrder = ElementRules.IsFloor(Entity.Kind)
+            ? _order
+            : _order - cell.y * RowStep - (cell.x & 1);
+        if (_crown != null) {
+            _crown.sortingOrder = _renderer.sortingOrder + 1;
+        }
+    }
+
+    // Дерево стоит в клетке не по линейке. Сдвиг считается от координат клетки: при перерисовке
+    // дерево остаётся на месте, а после толчка встаёт по-новому — уже по новой клетке.
+    private Vector3 Place(Vector3Int cell) {
+        if (!ElementRules.IsJittered(Entity.Kind)) {
+            return ToWorld(cell);
+        }
+
+        int hash = ((cell.x * 73856093) ^ (cell.y * 19349663) ^ ((cell.z + 1) * 83492791)) & 0x7FFFFFFF;
+        return ToWorld(cell) + new Vector3((hash % 5 - 2) * Pixel, (hash / 5 % 3 - 1) * Pixel, 0f);
     }
 
     private void Update() {
@@ -182,7 +225,8 @@ public class ElementView : MonoBehaviour {
         }
     }
 
-    public static Vector3 ToWorld(Vector2Int cell) {
+    // Уровень (z клетки) на положение не влияет: уровни лежат один поверх другого, виден всегда один.
+    public static Vector3 ToWorld(Vector3Int cell) {
         return new Vector3(cell.x, cell.y, 0f);
     }
 }

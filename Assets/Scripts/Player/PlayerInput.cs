@@ -19,7 +19,7 @@ public class PlayerInput : MonoBehaviour {
     private Vector2Int _heldDirection;
     private float _nextRepeatTime;
     private bool _throneMode;
-    private Vector2Int? _dragCell;
+    private Vector3Int? _dragCell;
     private Vector3 _dragStart;
 
     private void Update() {
@@ -77,8 +77,9 @@ public class PlayerInput : MonoBehaviour {
         }
 
         Vector3 worldPosition = _world.ScreenToWorld(mouse.position.ReadValue());
-        Vector2Int cell = new(Mathf.RoundToInt(worldPosition.x), Mathf.RoundToInt(worldPosition.y));
-        bool onScreen = model.IsInScreen(_world.Screen, cell);
+        // Клетку под мышью ищем на видимом уровне: в пещере это пол пещеры, а не то, что над ней.
+        bool onScreen = model.TryVisibleCell(Mathf.RoundToInt(worldPosition.x), Mathf.RoundToInt(worldPosition.y), out Vector3Int cell)
+            && model.IsInScreen(_world.Screen, cell);
         if (onScreen) {
             _world.Cursor.Show(cell);
         } else {
@@ -116,9 +117,8 @@ public class PlayerInput : MonoBehaviour {
         _dragCell = null; // одно движение — одна попытка, до следующего нажатия
     }
 
-    private void Swipe(WorldModel model, Vector2Int from, Vector2Int direction) {
-        Vector2Int to = from + direction;
-        switch (model.Swap(from, to)) {
+    private void Swipe(WorldModel model, Vector3Int from, Vector2Int direction) {
+        switch (model.Swap(from, direction, out Vector3Int to)) {
             case SwapResult.Swapped:
                 break;
             case SwapResult.NoMatch:

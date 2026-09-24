@@ -111,7 +111,7 @@ public static class GameSceneBuilder {
 %..............................%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%";
 
-    private static readonly (string Symbol, ElementKind Kind)[] DefaultLegend = {
+    internal static readonly (string Symbol, ElementKind Kind)[] DefaultLegend = {
         ("@", ElementKind.Hero), ("#", ElementKind.Wall),
         (",", ElementKind.Grass), ("~", ElementKind.Water), ("^", ElementKind.Lava), ("*", ElementKind.Ice), (":", ElementKind.Sand),
         ("R", ElementKind.Rock), ("T", ElementKind.Tree), ("U", ElementKind.Bush), ("F", ElementKind.Flower),
@@ -179,11 +179,17 @@ public static class GameSceneBuilder {
             return;
         }
 
-        List<Vector2Int> runs = WorldMap.FindRuns(world.BuildCells());
+        WorldGrid grid = world.BuildGrid();
+        List<Vector3Int> runs = WorldMap.FindRuns(grid);
         if (runs.Count > 0) {
             Debug.LogWarning($"Match Thee: на карте {runs.Count} клеток в рядах из трёх одинаковых: {string.Join(", ", runs.Take(12))}");
         } else {
             Debug.Log("Match Thee: карта мира без рядов из трёх одинаковых");
+        }
+
+        List<Vector3Int> ambiguous = grid.FindAmbiguous();
+        if (ambiguous.Count > 0) {
+            Debug.LogWarning($"Match Thee: в {ambiguous.Count} клетках с одного уровня видны сразу две: {string.Join(", ", ambiguous.Take(12))}");
         }
     }
 
@@ -241,7 +247,7 @@ public static class GameSceneBuilder {
             && paths.All(path => AssetDatabase.LoadAllAssetRepresentationsAtPath(path).OfType<Sprite>().Count() == ElementRules.WobbleFrames);
     }
 
-    private static void BuildAtlas() {
+    internal static void BuildAtlas() {
         Object folder = AssetDatabase.LoadAssetAtPath<DefaultAsset>(ElementsFolder);
         SpriteAtlasPackingSettings packing = new() {
             padding = 2,
@@ -295,7 +301,7 @@ public static class GameSceneBuilder {
         EditorUtility.SetDirty(atlasV1);
     }
 
-    private static void BuildElementsConfig() {
+    internal static void BuildElementsConfig() {
         EnsureFolder(ConfigsFolder);
         ElementsConfig config = AssetDatabase.LoadAssetAtPath<ElementsConfig>(ElementsConfigPath);
         if (config == null) {
@@ -389,7 +395,7 @@ public static class GameSceneBuilder {
     // Ссылки на конфиги берём по пути уже после создания сцены: инстанцирование шаблона
     // переимпортирует свежесозданные ассеты, и старые managed-ссылки на них становятся пустыми.
     private static void BuildScene() {
-        Scene scene = File.Exists(ScenePath) ? EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single) : CreateScene();
+        Scene scene = File.Exists(ScenePath) ? EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single) : CreateScene(ScenePath);
         WorldConfig world = AssetDatabase.LoadAssetAtPath<WorldConfig>(WorldConfigPath);
         ElementsConfig elements = AssetDatabase.LoadAssetAtPath<ElementsConfig>(ElementsConfigPath);
 
@@ -422,10 +428,10 @@ public static class GameSceneBuilder {
     }
 
     // Сцена из шаблона URP 2D (камера + Global Light 2D); без глобального света lit-спрайты чёрные.
-    private static Scene CreateScene() {
+    internal static Scene CreateScene(string scenePath) {
         SceneTemplateAsset template = AssetDatabase.LoadAssetAtPath<SceneTemplateAsset>(SceneTemplatePath);
         if (template != null) {
-            InstantiationResult result = SceneTemplateService.Instantiate(template, false, ScenePath);
+            InstantiationResult result = SceneTemplateService.Instantiate(template, false, scenePath);
             if (result != null) {
                 ConfigureCamera();
                 return result.scene;
@@ -445,7 +451,7 @@ public static class GameSceneBuilder {
         return scene;
     }
 
-    private static void ConfigureCamera() {
+    internal static void ConfigureCamera() {
         Camera camera = FindCamera();
         if (camera == null) {
             return;
@@ -459,11 +465,11 @@ public static class GameSceneBuilder {
         camera.transform.position = new Vector3(0f, 0f, -10f);
     }
 
-    private static Camera FindCamera() {
+    internal static Camera FindCamera() {
         return Camera.main != null ? Camera.main : Object.FindAnyObjectByType<Camera>();
     }
 
-    private static void EnsureFolder(string path) {
+    internal static void EnsureFolder(string path) {
         if (AssetDatabase.IsValidFolder(path)) {
             return;
         }

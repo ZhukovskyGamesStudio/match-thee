@@ -61,14 +61,22 @@ public class ElementSpriteImporter : AssetPostprocessor {
             existingIds[existing.name] = existing.spriteID;
         }
 
+        // Спрайт выше клетки бывает двух родов. Борт возвышенности свисает на клетку ниже: у него
+        // на месте держится верх кадра. Дерево, наоборот, стоит на своей клетке и выпирает вверх —
+        // у него на месте держится подошва. Ширина всегда центрируется.
+        bool overhangs = baseName.StartsWith("ledge_") || baseName == "cavemouth" || baseName == "slope";
+        float pivotY = height <= FrameSize ? 0.5f
+            : overhangs ? (height - FrameSize / 2f) / height
+            : FrameSize / 2f / height;
+
         SpriteRect[] rects = new SpriteRect[frames];
         for (int i = 0; i < frames; i++) {
             string spriteName = $"{baseName}_{i}";
             rects[i] = new SpriteRect {
                 name = spriteName,
                 rect = new Rect(i * frameWidth, 0, frameWidth, height),
-                alignment = SpriteAlignment.Center,
-                pivot = new Vector2(0.5f, 0.5f),
+                alignment = SpriteAlignment.Custom,
+                pivot = new Vector2(0.5f, pivotY),
                 spriteID = existingIds.TryGetValue(spriteName, out GUID id) ? id : StableGuid(assetPath + spriteName)
             };
         }

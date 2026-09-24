@@ -151,7 +151,7 @@ public class HudView : MonoBehaviour {
 
         _inventory.Added += OnResourceAdded;
         _inventory.Changed += OnResourceChanged;
-        _inventory.ScreenChanged += RebuildPanel;
+        _inventory.RoomChanged += RebuildPanel;
         _model.HeroFormChanged += OnHeroFormChanged;
         _model.Restored += OnRestored;
     }
@@ -160,7 +160,7 @@ public class HudView : MonoBehaviour {
         if (_inventory != null) {
             _inventory.Added -= OnResourceAdded;
             _inventory.Changed -= OnResourceChanged;
-            _inventory.ScreenChanged -= RebuildPanel;
+            _inventory.RoomChanged -= RebuildPanel;
         }
 
         if (_model != null) {
@@ -481,8 +481,8 @@ public class HudView : MonoBehaviour {
         _backpack.localScale = Vector3.one * (1f + (PunchScale - 1f) * Mathf.Sin(_punchProgress * Mathf.PI));
     }
 
-    // Панель под рюкзаком, видна всегда, пока в рюкзаке что-то есть: по строке на предмет — иконка и счёт:
-    // общие «×N» и тусклее местные «+M» этого экрана. Пока герой превращён, первой строкой он сам.
+    // Панель под рюкзаком, видна всегда, пока в рюкзаке что-то есть: по строке на предмет — счёт и правее иконка:
+    // общие числом и тусклее местные этого экрана. Пока герой превращён, первой строкой он сам.
     // Текущая форма подсвечена цветом короны.
     private void RebuildPanel() {
         if (_panelInner == null) {
@@ -501,9 +501,13 @@ public class HudView : MonoBehaviour {
         foreach (ElementKind kind in _inventory.Kinds) {
             int global = _inventory.GlobalCount(kind);
             int local = _inventory.LocalCount(kind);
-            string label = global > 0 ? $"×{global}" : string.Empty;
+            string label = global > 0 ? global.ToString() : string.Empty;
             if (local > 0) {
-                label += $"{LocalColorTag}+{local}</color>";
+                if (label.Length > 0) {
+                    label += " ";
+                }
+
+                label += $"{LocalColorTag}{local}</color>";
             }
 
             items.Add((kind, label));
@@ -521,9 +525,9 @@ public class HudView : MonoBehaviour {
         float y = -pad;
         foreach ((ElementKind Kind, string Label) item in items) {
             bool isForm = Features.Transformation && _model.HeroForm == item.Kind;
-            PlaceTopLeft(CreateImage(_panelInner, "Icon", _elements.GetFrame(item.Kind, 0)), new Vector2(pad, y), new Vector2(row, row));
-            Text count = CreateText(_panelInner, item.Label, row * 0.5f, TextAnchor.MiddleLeft);
-            PlaceTopLeft(count.rectTransform, new Vector2(pad + row + pad * 0.5f, y), new Vector2(width - row - pad * 2.5f, row));
+            Text count = CreateText(_panelInner, item.Label, row * 0.5f, TextAnchor.MiddleRight);
+            PlaceTopLeft(count.rectTransform, new Vector2(pad, y), new Vector2(width - row - pad * 2.5f, row));
+            PlaceTopLeft(CreateImage(_panelInner, "Icon", _elements.GetFrame(item.Kind, 0)), new Vector2(width - row - pad, y), new Vector2(row, row));
             if (isForm) {
                 count.color = FormTextColor;
             }

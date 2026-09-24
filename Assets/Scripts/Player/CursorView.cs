@@ -3,7 +3,7 @@ using UnityEngine;
 // Рамка на клетке под курсором мыши в режиме трона.
 [RequireComponent(typeof(SpriteRenderer))]
 public class CursorView : MonoBehaviour {
-    private const int SortingOrder = 30;
+    private const int SortingOrder = 30000; // поверх всего: рамка курсора
     private const float WobbleFps = 5f;
 
     private SpriteRenderer _renderer;
@@ -20,7 +20,7 @@ public class CursorView : MonoBehaviour {
         Hide();
     }
 
-    public void Show(Vector2Int cell) {
+    public void Show(Vector3Int cell) {
         _renderer.enabled = true;
         transform.position = ElementView.ToWorld(cell);
     }

@@ -10,18 +10,22 @@ public enum SwapResult {
     Invalid, // клетка вне мира, не соседняя или там не элемент (стена, герой)
 }
 
-// Состояние мира без Unity-объектов: сетка, предметы, герой, экраны, ходы, свопы с трона и сбор рядов.
+// Состояние мира без Unity-объектов: сетка по уровням, предметы, герой, комнаты, ходы, свопы с трона и сбор рядов.
+// Клетка — это (x, y, уровень): мир многоуровневый, и под плато может лежать пещера. Соседство и шаги
+// считает WorldGrid: через вход в пещеру шаг уводит на другой уровень, вместе с толкаемым элементом.
 public class WorldModel {
     // Своп с трона только между соседними клетками, как в классических три-в-ряд.
     public const bool ThroneSwapAdjacentOnly = true;
 
     // Что даёт группа по длине самого длинного прямого ряда в ней: три — просто исчезает,
-    // четыре — один ресурс только на этом экране, пять — один ресурс на всех экранах.
+    // четыре — один ресурс только в этой комнате, пять — один ресурс во всех комнатах.
     public const int LocalRunLength = 4;
     public const int GlobalRunLength = 5;
 
-    public int Width { get; }
-    public int Height { get; }
+    public WorldGrid Grid { get; }
+    public int Width => Grid.Width;
+    public int Height => Grid.Height;
+    public int LayerCount => Grid.Layers;
     public int ScreenWidth { get; }
     public int ScreenHeight { get; }
     public WorldEntity Hero { get; private set; }
@@ -29,7 +33,12 @@ public class WorldModel {
     public ElementKind HeroForm { get; private set; } = ElementKind.None;
     public bool IsHeroTransformed => HeroForm != ElementKind.None;
     public Vector2Int CurrentScreen { get; private set; }
+    // Уровень, на котором стоит герой: видно только его — и переходы, ведущие на него.
+    public int CurrentLayer { get; private set; }
+    // Комната — экран на своём уровне: пещера под плато и само плато считаются разными комнатами.
+    public Vector3Int CurrentRoom => new(CurrentScreen.x, CurrentScreen.y, CurrentLayer);
     public Inventory Inventory { get; } = new();
+    public IEnumerable<WorldEntity> Grounds => _grounds.Values;
     public IEnumerable<WorldEntity> Floors => _floors.Values;
     public IEnumerable<WorldEntity> Objects => _objects.Values;
     public bool IsHeroOnThrone => Hero != null && FloorAt(Hero.Position)?.Kind == ElementKind.Throne;
@@ -49,75 +58,97 @@ public class WorldModel {
     // Первый вход в комнату: где герой в неё вошёл, в какой форме и что местного лежало в рюкзаке.
     // Рестарт возвращает комнату в вид из карты и героя на эту клетку.
     private class RoomEntry {
-        public Vector2Int HeroCell;
+        public Vector3Int HeroCell;
         public ElementKind HeroForm;
         public Dictionary<ElementKind, int> Local;
     }
 
-    private readonly Dictionary<Vector2Int, RoomEntry> _roomEntries = new();
-    private readonly ElementKind[,] _initialObjects; // слой предметов из карты, для рестарта комнаты
+    private readonly Dictionary<Vector3Int, RoomEntry> _roomEntries = new();
 
-    private readonly Dictionary<Vector2Int, WorldEntity> _floors = new();
-    private readonly Dictionary<Vector2Int, WorldEntity> _objects = new();
-    private readonly ElementKind[,] _cells; // слой предметов (без пола) для поиска рядов
+    private readonly Dictionary<Vector3Int, WorldEntity> _grounds = new(); // земля уровня под всем остальным
+    private readonly Dictionary<Vector3Int, WorldEntity> _floors = new();
+    private readonly Dictionary<Vector3Int, WorldEntity> _objects = new();
+    private readonly ElementKind[,,] _cells; // слой предметов (без пола) для поиска рядов
 
-    public WorldModel(ElementKind[,] cells, int screenWidth, int screenHeight) {
-        Width = cells.GetLength(0);
-        Height = cells.GetLength(1);
+    public WorldModel(WorldGrid grid, int screenWidth, int screenHeight) {
+        Grid = grid;
         ScreenWidth = Math.Max(2, screenWidth);
         ScreenHeight = Math.Max(2, screenHeight);
-        _cells = new ElementKind[Width, Height];
-        _initialObjects = new ElementKind[Width, Height];
+        _cells = new ElementKind[Width, Height, LayerCount];
 
-        for (int y = 0; y < Height; y++) {
-            for (int x = 0; x < Width; x++) {
-                ElementKind kind = cells[x, y];
-                if (kind == ElementKind.None) {
-                    continue;
-                }
-
-                if (!ElementRules.IsFloor(kind)) {
-                    _initialObjects[x, y] = kind;
-                }
-
-                WorldEntity entity = new(kind, new Vector2Int(x, y));
-                if (ElementRules.IsFloor(kind)) {
-                    _floors[entity.Position] = entity;
-                    continue;
-                }
-
-                if (kind == ElementKind.Hero) {
-                    Hero = entity; // до Place: в сетке рядов клетка героя считается персонажем
-                }
-
-                Place(entity, entity.Position);
+        foreach (Vector3Int cell in Grid.Cells()) {
+            // Под предметом и полом-декором лежит земля уровня: они не висят над пустотой
+            // и не оставляют дыру, когда уходят.
+            ElementKind ground = Grid.GroundAt(cell);
+            if (ground != ElementKind.None) {
+                _grounds[cell] = new WorldEntity(ground, cell);
             }
+
+            ElementKind kind = Grid.KindAt(cell);
+            if (kind == ElementKind.None) {
+                continue;
+            }
+
+            WorldEntity entity = new(kind, cell);
+            if (ElementRules.IsFloor(kind)) {
+                _floors[cell] = entity;
+                continue;
+            }
+
+            if (kind == ElementKind.Hero) {
+                Hero = entity; // до Place: в сетке рядов клетка героя считается персонажем
+            }
+
+            Place(entity, cell);
         }
     }
 
-    public bool IsInside(Vector2Int cell) {
-        return cell.x >= 0 && cell.y >= 0 && cell.x < Width && cell.y < Height;
+    public bool IsInside(Vector3Int cell) {
+        return Grid.Exists(cell);
     }
 
-    public WorldEntity ObjectAt(Vector2Int cell) {
+    public WorldEntity ObjectAt(Vector3Int cell) {
         return _objects.TryGetValue(cell, out WorldEntity entity) ? entity : null;
     }
 
-    public WorldEntity FloorAt(Vector2Int cell) {
+    public WorldEntity FloorAt(Vector3Int cell) {
         return _floors.TryGetValue(cell, out WorldEntity entity) ? entity : null;
+    }
+
+    // Видна ли клетка с уровня, где стоит герой: чужие уровни скрыты, переходы на наш — видны.
+    public bool IsVisible(Vector3Int cell) {
+        return Grid.IsVisible(cell, CurrentLayer);
+    }
+
+    // Клетка столбца (x, y), которую игрок сейчас видит: нужна, чтобы попадать мышью с трона.
+    public bool TryVisibleCell(int x, int y, out Vector3Int cell) {
+        cell = new Vector3Int(x, y, CurrentLayer);
+        if (Grid.Exists(cell)) {
+            return true;
+        }
+
+        for (int layer = 0; layer < LayerCount; layer++) {
+            Vector3Int candidate = new(x, y, layer);
+            if (Grid.IsVisible(candidate, CurrentLayer)) {
+                cell = candidate;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public Vector2Int ScreenOrigin(Vector2Int screen) {
         return new Vector2Int(screen.x * ScreenStrideX, screen.y * ScreenStrideY);
     }
 
-    public bool IsInScreen(Vector2Int screen, Vector2Int cell) {
+    public bool IsInScreen(Vector2Int screen, Vector3Int cell) {
         Vector2Int origin = ScreenOrigin(screen);
         return cell.x >= origin.x && cell.x < origin.x + ScreenWidth && cell.y >= origin.y && cell.y < origin.y + ScreenHeight;
     }
 
     // Экран для клетки. Клетка на общем крае принадлежит обоим экранам, поэтому текущий экран в приоритете.
-    public Vector2Int ScreenContaining(Vector2Int cell, Vector2Int preferred) {
+    public Vector2Int ScreenContaining(Vector3Int cell, Vector2Int preferred) {
         if (IsInScreen(preferred, cell)) {
             return preferred;
         }
@@ -132,20 +163,19 @@ public class WorldModel {
 
     // Герой шагает на соседнюю клетку. Если там элемент — толкает его на клетку дальше.
     // Толкнуть можно ровно один элемент: если за ним стоит ещё что-то (элемент, стена, край мира) — хода нет.
+    // Шаг через вход в пещеру или лестницу уводит на другой уровень — и героя, и то, что он толкает.
     public bool TryMoveHero(Vector2Int direction) {
-        if (Hero == null || !CanEnter(Hero.Position + direction)) {
+        if (Hero == null || !Grid.TryStep(Hero.Position, direction, out Vector3Int target)) {
             return false;
         }
 
-        Vector2Int target = Hero.Position + direction;
         WorldEntity blocker = ObjectAt(target);
         if (blocker != null) {
             if (!ElementRules.IsPushable(blocker.Kind)) {
                 return false;
             }
 
-            Vector2Int beyond = target + direction;
-            if (!CanEnter(beyond) || ObjectAt(beyond) != null) {
+            if (!Grid.TryStep(target, direction, out Vector3Int beyond) || ObjectAt(beyond) != null) {
                 return false;
             }
 
@@ -157,18 +187,16 @@ public class WorldModel {
         return true;
     }
 
-    // Своп с трона: два элемента меняются местами, только если после этого сложится ряд.
-    public SwapResult Swap(Vector2Int a, Vector2Int b) {
-        if (a == b || !IsInside(a) || !IsInside(b)) {
+    // Своп с трона: два соседних элемента меняются местами, только если после этого сложится ряд.
+    // Вторая клетка ищется по правилам сетки, поэтому менять можно и через вход в пещеру.
+    public SwapResult Swap(Vector3Int from, Vector2Int direction, out Vector3Int to) {
+        to = from;
+        if (!IsInside(from) || !Grid.TryStep(from, direction, out to)) {
             return SwapResult.Invalid;
         }
 
-        if (ThroneSwapAdjacentOnly && Math.Abs(a.x - b.x) + Math.Abs(a.y - b.y) != 1) {
-            return SwapResult.Invalid;
-        }
-
-        WorldEntity first = ObjectAt(a);
-        WorldEntity second = ObjectAt(b);
+        WorldEntity first = ObjectAt(from);
+        WorldEntity second = ObjectAt(to);
         if (first == null || !ElementRules.IsPushable(first.Kind)) {
             return SwapResult.Invalid;
         }
@@ -181,11 +209,11 @@ public class WorldModel {
             return SwapResult.Invalid;
         }
 
-        Place(first, b);
-        Place(second, a);
-        if (WorldMap.FindRuns(_cells).Count == 0) {
-            Place(first, a);
-            Place(second, b);
+        Place(first, to);
+        Place(second, from);
+        if (WorldMap.FindRuns(Grid, _cells).Count == 0) {
+            Place(first, from);
+            Place(second, to);
             return SwapResult.NoMatch;
         }
 
@@ -239,7 +267,7 @@ public class WorldModel {
 
     private void SetHeroForm(ElementKind kind) {
         HeroForm = kind;
-        _cells[Hero.Position.x, Hero.Position.y] = CellKind(Hero);
+        _cells[Hero.Position.x, Hero.Position.y, Hero.Position.z] = CellKind(Hero);
         HeroFormChanged?.Invoke(kind);
     }
 
@@ -252,11 +280,12 @@ public class WorldModel {
         return IsHeroTransformed ? HeroForm : ElementKind.Person;
     }
 
-    // Экран, где стоит герой: от него зависят доступные местные ресурсы. Если предмета формы героя
-    // на новом экране нет (местный ресурс не переносится) — герой становится собой; если есть — остаётся.
-    public void SetScreen(Vector2Int screen) {
+    // Комната, в которой стоит герой: экран и уровень. От неё зависят доступные местные ресурсы.
+    // Если предмета формы героя в новой комнате нет (местный ресурс не переносится) — герой становится собой.
+    public void SetRoom(Vector2Int screen, int layer) {
         CurrentScreen = screen;
-        Inventory.Screen = screen;
+        CurrentLayer = layer;
+        Inventory.Room = CurrentRoom;
         if (Hero != null && IsHeroTransformed && Inventory.Count(HeroForm) <= 0) {
             SetHeroForm(ElementKind.None);
             ResolveMatches();
@@ -265,22 +294,22 @@ public class WorldModel {
 
     // Запомнить первый вход в текущую комнату (повторные входы ничего не меняют).
     public void RecordRoomEntry() {
-        if (Hero == null || _roomEntries.ContainsKey(CurrentScreen)) {
+        if (Hero == null || _roomEntries.ContainsKey(CurrentRoom)) {
             return;
         }
 
-        _roomEntries[CurrentScreen] = new RoomEntry {
+        _roomEntries[CurrentRoom] = new RoomEntry {
             HeroCell = Hero.Position,
             HeroForm = HeroForm,
-            Local = Inventory.SaveLocal(CurrentScreen),
+            Local = Inventory.SaveLocal(CurrentRoom),
         };
     }
 
-    // Рестарт комнаты: предметы в её прямоугольнике — как на карте, герой на клетке первого входа,
+    // Рестарт комнаты: предметы в её прямоугольнике на её уровне — как на карте, герой на клетке первого входа,
     // общие ресурсы, добытые здесь, отняты, потраченные здесь — возвращены, местные — как при первом входе.
     // Предметы пересоздаются заново (старые сущности комнаты больше не действительны).
     public bool RestartRoom() {
-        if (!_roomEntries.TryGetValue(CurrentScreen, out RoomEntry entry)) {
+        if (!_roomEntries.TryGetValue(CurrentRoom, out RoomEntry entry)) {
             return false;
         }
 
@@ -292,7 +321,7 @@ public class WorldModel {
         }
 
         foreach (WorldEntity entity in _objects.Values.ToList()) {
-            if (IsInScreen(CurrentScreen, entity.Position)) {
+            if (entity.Position.z == CurrentLayer && IsInScreen(CurrentScreen, entity.Position)) {
                 Remove(entity);
             }
         }
@@ -300,13 +329,13 @@ public class WorldModel {
         Vector2Int origin = ScreenOrigin(CurrentScreen);
         for (int y = origin.y; y < origin.y + ScreenHeight; y++) {
             for (int x = origin.x; x < origin.x + ScreenWidth; x++) {
-                if (!IsInside(new Vector2Int(x, y))) {
+                Vector3Int cell = new(x, y, CurrentLayer);
+                if (!Grid.Exists(cell)) {
                     continue;
                 }
 
-                ElementKind kind = _initialObjects[x, y];
-                Vector2Int cell = new(x, y);
-                if (kind == ElementKind.None || kind == ElementKind.Hero || cell == entry.HeroCell) {
+                ElementKind kind = Grid.KindAt(cell);
+                if (kind == ElementKind.None || kind == ElementKind.Hero || ElementRules.IsFloor(kind) || cell == entry.HeroCell) {
                     continue;
                 }
 
@@ -319,43 +348,34 @@ public class WorldModel {
             Remove(occupant);
         }
 
-        Inventory.RestartRoom(CurrentScreen, entry.Local);
+        Inventory.RestartRoom(CurrentRoom, entry.Local);
         HeroForm = ElementKind.None;
         Place(Hero, entry.HeroCell);
         if (entry.HeroForm != ElementKind.None && Inventory.Count(entry.HeroForm) > 0) {
             HeroForm = entry.HeroForm;
-            _cells[Hero.Position.x, Hero.Position.y] = CellKind(Hero);
+            _cells[Hero.Position.x, Hero.Position.y, Hero.Position.z] = CellKind(Hero);
         }
 
         Restored?.Invoke();
         return true;
     }
 
-    private bool CanEnter(Vector2Int cell) {
-        if (!IsInside(cell)) {
-            return false;
-        }
-
-        WorldEntity occupant = ObjectAt(cell);
-        return occupant == null || !ElementRules.IsSolid(occupant.Kind);
-    }
-
-    private void Move(WorldEntity entity, Vector2Int to) {
+    private void Move(WorldEntity entity, Vector3Int to) {
         _objects.Remove(entity.Position);
-        _cells[entity.Position.x, entity.Position.y] = ElementKind.None;
+        _cells[entity.Position.x, entity.Position.y, entity.Position.z] = ElementKind.None;
         Place(entity, to);
         EntityMoved?.Invoke(entity);
     }
 
-    private void Place(WorldEntity entity, Vector2Int cell) {
+    private void Place(WorldEntity entity, Vector3Int cell) {
         entity.Position = cell;
         _objects[cell] = entity;
-        _cells[cell.x, cell.y] = CellKind(entity);
+        _cells[cell.x, cell.y, cell.z] = CellKind(entity);
     }
 
     private void Remove(WorldEntity entity) {
         _objects.Remove(entity.Position);
-        _cells[entity.Position.x, entity.Position.y] = ElementKind.None;
+        _cells[entity.Position.x, entity.Position.y, entity.Position.z] = ElementKind.None;
     }
 
     // Ряды из трёх и более одинаковых элементов исчезают. Связная группа одного вида
@@ -363,33 +383,33 @@ public class WorldModel {
     // В группе с превращённым героем соседи исчезают, герой становится собой; награда — см. ветку ниже.
     // Группа персонажей с героем — конец игры: герой исчезает вместе с ними.
     private void ResolveMatches() {
-        List<Vector2Int> runs = WorldMap.FindRuns(_cells);
+        List<Vector3Int> runs = WorldMap.FindRuns(Grid, _cells);
         if (runs.Count == 0) {
             return;
         }
 
-        HashSet<Vector2Int> runCells = new(runs);
-        HashSet<Vector2Int> visited = new();
+        HashSet<Vector3Int> runCells = new(runs);
+        HashSet<Vector3Int> visited = new();
         List<WorldEntity> matched = new();
-        Stack<Vector2Int> stack = new();
-        HashSet<Vector2Int> group = new();
+        Stack<Vector3Int> stack = new();
+        HashSet<Vector3Int> group = new();
         bool won = false;
         bool revertHero = false;
 
-        foreach (Vector2Int start in runs) {
+        foreach (Vector3Int start in runs) {
             if (!visited.Add(start)) {
                 continue;
             }
 
-            ElementKind kind = _cells[start.x, start.y];
+            ElementKind kind = _cells[start.x, start.y, start.z];
             bool withHero = false;
             group.Clear();
             stack.Push(start);
             while (stack.Count > 0) {
-                Vector2Int cell = stack.Pop();
+                Vector3Int cell = stack.Pop();
                 group.Add(cell);
-                foreach (Vector2Int neighbor in Neighbors(cell)) {
-                    if (runCells.Contains(neighbor) && _cells[neighbor.x, neighbor.y] == kind && visited.Add(neighbor)) {
+                foreach (Vector3Int neighbor in Neighbors(cell)) {
+                    if (runCells.Contains(neighbor) && _cells[neighbor.x, neighbor.y, neighbor.z] == kind && visited.Add(neighbor)) {
                         stack.Push(neighbor);
                     }
                 }
@@ -442,34 +462,50 @@ public class WorldModel {
     }
 
     // Самый длинный прямой ряд (горизонтальный или вертикальный) внутри группы клеток.
-    private static int LongestRun(HashSet<Vector2Int> group) {
+    private int LongestRun(HashSet<Vector3Int> group) {
         int longest = 0;
-        foreach (Vector2Int cell in group) {
-            if (!group.Contains(cell + Vector2Int.left)) {
-                longest = Math.Max(longest, RunLength(group, cell, Vector2Int.right));
-            }
+        foreach (Vector3Int cell in group) {
+            foreach (Vector2Int step in new[] { Vector2Int.right, Vector2Int.up }) {
+                // Считаем от начала ряда: клетки с соседом группы позади пропускаем.
+                if (Grid.TryStep(cell, -step, out Vector3Int back) && group.Contains(back)) {
+                    continue;
+                }
 
-            if (!group.Contains(cell + Vector2Int.down)) {
-                longest = Math.Max(longest, RunLength(group, cell, Vector2Int.up));
+                longest = Math.Max(longest, RunLength(group, cell, step));
             }
         }
 
         return longest;
     }
 
-    private static int RunLength(HashSet<Vector2Int> group, Vector2Int start, Vector2Int step) {
+    private int RunLength(HashSet<Vector3Int> group, Vector3Int start, Vector2Int step) {
         int length = 0;
-        for (Vector2Int cell = start; group.Contains(cell); cell += step) {
+        Vector3Int cell = start;
+        while (group.Contains(cell)) {
             length++;
+            if (!Grid.TryStep(cell, step, out cell)) {
+                break;
+            }
         }
 
         return length;
     }
 
-    private static IEnumerable<Vector2Int> Neighbors(Vector2Int cell) {
-        yield return cell + Vector2Int.right;
-        yield return cell + Vector2Int.left;
-        yield return cell + Vector2Int.up;
-        yield return cell + Vector2Int.down;
+    private IEnumerable<Vector3Int> Neighbors(Vector3Int cell) {
+        if (Grid.TryStep(cell, Vector2Int.right, out Vector3Int right)) {
+            yield return right;
+        }
+
+        if (Grid.TryStep(cell, Vector2Int.left, out Vector3Int left)) {
+            yield return left;
+        }
+
+        if (Grid.TryStep(cell, Vector2Int.up, out Vector3Int up)) {
+            yield return up;
+        }
+
+        if (Grid.TryStep(cell, Vector2Int.down, out Vector3Int down)) {
+            yield return down;
+        }
     }
 }
